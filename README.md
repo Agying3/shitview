@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh-CN.md)
+
 # shitview
 
 Dynamic project folder map. The long-term product path is Rust + Slint; the Python + PySide6 implementation remains the migration reference.
