@@ -24,12 +24,12 @@ export struct SceneLabel {
 }
 
 export component AppWindow inherits Window {
-    title: "shitview Phase 1";
+    title: "shitview";
     preferred-width: 1280px;
     preferred-height: 800px;
     min-width: 960px;
     min-height: 640px;
-    background: #111419;
+    background: #101814;
 
     in property <[SceneRect]> graph-nodes;
     in property <[SceneRect]> graph-modules;
@@ -80,8 +80,8 @@ export component AppWindow inherits Window {
 
         Rectangle {
             height: 62px;
-            background: #181c23;
-            border-color: #323a46;
+            background: #17201c;
+            border-color: #31463c;
             border-width: 1px;
 
             HorizontalBox {
@@ -150,8 +150,8 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 width: 228px;
-                background: #15191f;
-                border-color: #2b323d;
+                background: #141b18;
+                border-color: #2d3d35;
                 border-width: 1px;
 
                 VerticalBox {
@@ -166,7 +166,7 @@ export component AppWindow inherits Window {
                         Text { text: "visible nodes"; color: #8290a2; font-size: 11px; }
                     }
 
-                    Rectangle { height: 1px; background: #2b323d; }
+                    Rectangle { height: 1px; background: #2d3d35; }
 
                     VerticalBox {
                         spacing: 8px;
@@ -187,7 +187,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle { height: 1px; background: #2b323d; }
+                    Rectangle { height: 1px; background: #2d3d35; }
 
                     VerticalBox {
                         spacing: 8px;
@@ -211,7 +211,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle { height: 1px; background: #2b323d; }
+                    Rectangle { height: 1px; background: #2d3d35; }
 
                     VerticalBox {
                         spacing: 8px;
@@ -269,7 +269,7 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                background: #101318;
+                background: #0d1915;
                 clip: true;
 
                 ScrollView {
@@ -279,7 +279,7 @@ export component AppWindow inherits Window {
                     Rectangle {
                         width: root.scene-width * root.zoom * 1px;
                         height: root.scene-height * root.zoom * 1px;
-                        background: #101318;
+                        background: #0d1915;
 
                         Image {
                             width: root.scene-width * root.zoom * 1px;
@@ -329,7 +329,7 @@ export component AppWindow inherits Window {
                             width: root.selected-width * root.zoom * 1px;
                             height: root.selected-height * root.zoom * 1px;
                             background: transparent;
-                            border-color: #f4f7fb;
+                            border-color: #f0c96b;
                             border-width: 2px;
                             border-radius: 3px;
                         }

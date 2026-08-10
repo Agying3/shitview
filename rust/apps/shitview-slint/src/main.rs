@@ -509,9 +509,9 @@ fn rasterize_scene(scene: &SyntheticScene) -> SharedPixelBuffer<Rgba8Pixel> {
     let (scale, width, height) = raster_dimensions(scene);
     let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
     pixels.make_mut_slice().fill(Rgba8Pixel {
-        r: 0x10,
-        g: 0x13,
-        b: 0x18,
+        r: 0x0d,
+        g: 0x19,
+        b: 0x15,
         a: 255,
     });
 
@@ -554,6 +554,56 @@ fn draw_border(
     draw_rect(pixels, x, y + height - thickness, width, thickness, color, scale);
     draw_rect(pixels, x, y, thickness, height, color, scale);
     draw_rect(pixels, x + width - thickness, y, thickness, height, color, scale);
+}
+
+fn push_module_frame(
+    modules: &mut Vec<SceneRect>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    accent: (u8, u8, u8),
+) {
+    let (red, green, blue) = accent;
+    modules.push(SceneRect {
+        x,
+        y,
+        width,
+        height,
+        fill: Color::from_argb_u8(235, 0x0f, 0x20, 0x1a),
+        border: Color::from_argb_u8(210, red, green, blue),
+    });
+    modules.push(SceneRect {
+        x: x + 8.0,
+        y: y + 8.0,
+        width: (width - 16.0).max(1.0),
+        height: (height - 16.0).max(1.0),
+        fill: Color::from_argb_u8(20, red, green, blue),
+        border: Color::from_argb_u8(75, red, green, blue),
+    });
+    modules.push(SceneRect {
+        x: x + 14.0,
+        y: y + 12.0,
+        width: (width - 28.0).min(320.0).max(1.0),
+        height: 30.0,
+        fill: Color::from_argb_u8(230, 0x13, 0x27, 0x20),
+        border: Color::from_argb_u8(120, red, green, blue),
+    });
+    let pad_color = Color::from_argb_u8(230, 0xd0, 0xa8, 0x58);
+    for (pad_x, pad_y) in [
+        (x + 12.0, y + height - 20.0),
+        (x + width - 20.0, y + 12.0),
+        (x + width - 20.0, y + height - 20.0),
+    ] {
+        modules.push(SceneRect {
+            x: pad_x,
+            y: pad_y,
+            width: 8.0,
+            height: 8.0,
+            fill: pad_color,
+            border: Color::from_argb_u8(255, 0xf0, 0xc9, 0x72),
+        });
+    }
 }
 
 fn draw_rect(
@@ -906,46 +956,55 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
     let module_padding_x = 46.0;
     let module_header = 58.0;
     let module_width = module_padding_x * 2.0 + INNER_COLUMNS as f32 * (node_width + gap_x);
-    let module_rows_inner = MODULE_CAPACITY.div_ceil(INNER_COLUMNS);
-    let module_height = module_header + 34.0 + module_rows_inner as f32 * (node_height + gap_y);
     let module_gap_x = 88.0;
     let module_gap_y = 92.0;
     let outer_margin = 90.0;
-    let module_rows = modules_data.len().max(1).div_ceil(MODULE_COLUMNS_REAL);
     let scene_width = outer_margin * 2.0
         + MODULE_COLUMNS_REAL as f32 * module_width
         + (MODULE_COLUMNS_REAL - 1) as f32 * module_gap_x;
-    let scene_height = outer_margin * 2.0
-        + module_rows as f32 * module_height
-        + module_rows.saturating_sub(1) as f32 * module_gap_y;
     let palette = [
-        (0x3d, 0x83, 0xc6),
-        (0x31, 0xa6, 0xa0),
-        (0x76, 0x63, 0xb6),
-        (0xc0, 0x76, 0x3e),
-        (0x4f, 0x9d, 0x62),
-        (0xb4, 0x59, 0x82),
+        (0x55, 0xc7, 0x8a),
+        (0x4b, 0xa8, 0xa2),
+        (0x56, 0x93, 0xc7),
+        (0xc1, 0x99, 0x52),
+        (0xa5, 0x75, 0xb9),
+        (0xb5, 0x67, 0x75),
     ];
     let mut nodes = Vec::with_capacity(indexed_nodes.len());
     let mut modules = Vec::with_capacity(modules_data.len());
     let mut segments = Vec::with_capacity(indexed_nodes.len() + 128);
     let mut labels = Vec::with_capacity(modules_data.len());
     let mut hit_targets = Vec::with_capacity(indexed_nodes.len());
-    add_grid(&mut segments, scene_width, scene_height);
+    let mut column_heights = [outer_margin; MODULE_COLUMNS_REAL];
 
     for (module_index, (label, module_nodes)) in modules_data.into_iter().enumerate() {
-        let column = module_index % MODULE_COLUMNS_REAL;
-        let row = module_index / MODULE_COLUMNS_REAL;
+        let column = column_heights
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| left.total_cmp(right))
+            .map(|(index, _)| index)
+            .unwrap_or(module_index % MODULE_COLUMNS_REAL);
+        let rows = module_nodes.len().max(1).div_ceil(INNER_COLUMNS);
+        let module_height = module_header + 34.0 + rows as f32 * (node_height + gap_y);
         let module_x = outer_margin + column as f32 * (module_width + module_gap_x);
-        let module_y = outer_margin + row as f32 * (module_height + module_gap_y);
+        let module_y = column_heights[column];
         let (red, green, blue) = palette[module_index % palette.len()];
-        modules.push(SceneRect {
-            x: module_x,
-            y: module_y,
-            width: module_width,
-            height: module_height,
-            fill: Color::from_argb_u8(48, red, green, blue),
-            border: Color::from_argb_u8(150, red, green, blue),
+        push_module_frame(
+            &mut modules,
+            module_x,
+            module_y,
+            module_width,
+            module_height,
+            (red, green, blue),
+        );
+        let bus_x = module_x + 28.0;
+        let first_center_y = module_y + module_header + node_height * 0.5;
+        segments.push(SceneSegment {
+            x: bus_x,
+            y: first_center_y,
+            width: 1.5,
+            height: ((rows.saturating_sub(1)) as f32 * (node_height + gap_y)).max(1.5),
+            color: Color::from_argb_u8(170, 0x55, 0xc7, 0x8a),
         });
         labels.push(SceneLabel {
             x: module_x + 20.0,
@@ -973,9 +1032,9 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
                 height: rendered_height,
                 fill: Color::from_argb_u8(
                     if is_directory { 215 } else { 155 },
-                    red.saturating_sub(20),
-                    green.saturating_sub(12),
-                    blue.saturating_sub(8),
+                    red / 5 + 12,
+                    green / 5 + 28,
+                    blue / 5 + 16,
                 ),
                 border: Color::from_argb_u8(220, red, green, blue),
             });
@@ -995,11 +1054,25 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
                     y: y + node_height * 0.5,
                     width: gap_x,
                     height: 1.5,
-                    color: Color::from_argb_u8(190, 0x48, 0xe1, 0x91),
+                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
+                });
+            } else {
+                segments.push(SceneSegment {
+                    x: bus_x,
+                    y: y + node_height * 0.5,
+                    width: (x - bus_x).max(1.0),
+                    height: 1.5,
+                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
                 });
             }
         }
+        column_heights[column] = module_y + module_height + module_gap_y;
     }
+    let scene_height = column_heights.iter().copied().fold(outer_margin, f32::max);
+    let mut board_grid = Vec::new();
+    add_grid(&mut board_grid, scene_width, scene_height);
+    board_grid.extend(segments);
+    segments = board_grid;
     let mut scene = SyntheticScene {
         nodes,
         modules,
@@ -1083,12 +1156,12 @@ fn build_scene(count: usize) -> SyntheticScene {
     let outer_margin = 90.0;
 
     let palette = [
-        (0x3d, 0x83, 0xc6),
-        (0x31, 0xa6, 0xa0),
-        (0x76, 0x63, 0xb6),
-        (0xc0, 0x76, 0x3e),
-        (0x4f, 0x9d, 0x62),
-        (0xb4, 0x59, 0x82),
+        (0x55, 0xc7, 0x8a),
+        (0x4b, 0xa8, 0xa2),
+        (0x56, 0x93, 0xc7),
+        (0xc1, 0x99, 0x52),
+        (0xa5, 0x75, 0xb9),
+        (0xb5, 0x67, 0x75),
     ];
 
     let mut nodes = Vec::with_capacity(count);
@@ -1115,14 +1188,14 @@ fn build_scene(count: usize) -> SyntheticScene {
         let module_y = outer_margin + row as f32 * (module_height + module_gap_y);
         let (red, green, blue) = palette[module_index % palette.len()];
 
-        modules.push(SceneRect {
-            x: module_x,
-            y: module_y,
-            width: module_width,
-            height: module_height,
-            fill: Color::from_argb_u8(48, red, green, blue),
-            border: Color::from_argb_u8(150, red, green, blue),
-        });
+        push_module_frame(
+            &mut modules,
+            module_x,
+            module_y,
+            module_width,
+            module_height,
+            (red, green, blue),
+        );
         labels.push(SceneLabel {
             x: module_x + 20.0,
             y: module_y + 17.0,
@@ -1147,9 +1220,9 @@ fn build_scene(count: usize) -> SyntheticScene {
                 height: rendered_height,
                 fill: Color::from_argb_u8(
                     if is_directory { 205 } else { 155 },
-                    red.saturating_sub(20),
-                    green.saturating_sub(12),
-                    blue.saturating_sub(8),
+                    red / 5 + 12,
+                    green / 5 + 28,
+                    blue / 5 + 16,
                 ),
                 border: Color::from_argb_u8(220, red, green, blue),
             });
@@ -1170,7 +1243,7 @@ fn build_scene(count: usize) -> SyntheticScene {
                     y: y + node_height * 0.5,
                     width: gap_x,
                     height: 1.5,
-                    color: Color::from_argb_u8(190, 0x48, 0xe1, 0x91),
+                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
                 });
             }
         }
@@ -1189,7 +1262,8 @@ fn build_scene(count: usize) -> SyntheticScene {
 }
 
 fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
-    let grid_color = Color::from_argb_u8(45, 0x52, 0x60, 0x70);
+    let grid_color = Color::from_argb_u8(38, 0x55, 0x7a, 0x64);
+    let major_color = Color::from_argb_u8(62, 0x68, 0x9a, 0x73);
     let mut x = 0.0;
     while x <= width {
         segments.push(SceneSegment {
@@ -1197,7 +1271,7 @@ fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
             y: 0.0,
             width: 1.0,
             height,
-            color: grid_color,
+            color: if (x as i32) % 480 == 0 { major_color } else { grid_color },
         });
         x += 120.0;
     }
@@ -1208,9 +1282,25 @@ fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
             y,
             width,
             height: 1.0,
-            color: grid_color,
+            color: if (y as i32) % 480 == 0 { major_color } else { grid_color },
         });
         y += 120.0;
+    }
+    let pad_color = Color::from_argb_u8(105, 0x6a, 0xb0, 0x78);
+    let mut pad_x = 60.0;
+    while pad_x < width {
+        let mut pad_y = 60.0;
+        while pad_y < height {
+            segments.push(SceneSegment {
+                x: pad_x,
+                y: pad_y,
+                width: 3.0,
+                height: 3.0,
+                color: pad_color,
+            });
+            pad_y += 120.0;
+        }
+        pad_x += 120.0;
     }
 }
 
