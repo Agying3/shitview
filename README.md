@@ -1,32 +1,32 @@
-[English](README.md) | [中文](README.zh-CN.md)
+[中文](README.md) | [English](README.en.md)
 
 # shitview
 
-Dynamic project folder map. The long-term product path is Rust + Slint; the Python + PySide6 implementation remains the migration reference.
+动态项目文件夹地图。长期产品路线基于 Rust + Slint；Python + PySide6 实现作为迁移参考保留。
 
-## Rust Phase 0
+## Rust Phase 0（阶段零）
 
-From `rust/` on Windows with MSYS2 MinGW:
+在 Windows 环境下，进入 `rust/` 目录并使用 MSYS2 MinGW：
 
 ```powershell
 .\run_phase0.bat
 ```
 
-The current Slint window is a synthetic 1,000/5,000/10,000-node renderer baseline. It does not yet index a real folder.
+当前 Slint 窗口是一个合成的渲染基准（分别渲染 1,000 / 5,000 / 10,000 个节点）。它尚未索引真实文件夹。
 
-## Python Reference Run
+## Python 参考运行
 
 ```powershell
 python -m shitview.main H:\some\project
 ```
 
-Or after installing the package:
+或者安装包之后：
 
 ```powershell
 shitview H:\some\project
 ```
 
-## Reuse As A Plugin
+## 作为插件复用
 
 ```python
 from shitview import analyze_folder, open_shitview, summarize_folder
@@ -40,11 +40,9 @@ print(analysis.file_count, analysis.directory_count, analysis.leaf_count)
 open_shitview(r"H:\some\project")
 ```
 
-Layers:
+分层结构：
 
-- `core`: models, diffing, labeling, graph layout
-- `services`: scanning, watching, orchestration
-- `ui`: Qt widgets and rendering
-- `plugin`: reusable entry points for scripts, tools, and other folders
-
-
+- `core`：数据模型、差异比对、标签、图布局
+- `services`：扫描、监听、编排
+- `ui`：Qt 控件与渲染
+- `plugin`：供脚本、工具及其他文件夹复用的入口
