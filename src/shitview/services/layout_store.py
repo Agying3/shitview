@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+LAYOUT_VERSION = 3
+
+
 @dataclass(slots=True)
 class UserLayoutStore:
     root: Path
@@ -19,6 +22,8 @@ class UserLayoutStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            return {}
+        if data.get("version") != LAYOUT_VERSION:
             return {}
         nodes = data.get("nodes", {})
         positions: dict[str, tuple[float, float]] = {}
@@ -41,16 +46,19 @@ class UserLayoutStore:
             nodes = {}
             data["nodes"] = nodes
         nodes[node_path] = [round(x, 2), round(y, 2)]
+        data["version"] = LAYOUT_VERSION
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _load_raw(self) -> dict[str, object]:
         if not self.path.exists():
-            return {"nodes": {}}
+            return {"version": LAYOUT_VERSION, "nodes": {}}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return {"nodes": {}}
-        return data if isinstance(data, dict) else {"nodes": {}}
+            return {"version": LAYOUT_VERSION, "nodes": {}}
+        if not isinstance(data, dict) or data.get("version") != LAYOUT_VERSION:
+            return {"version": LAYOUT_VERSION, "nodes": {}}
+        return data
 
 

@@ -95,41 +95,6 @@ QPushButton#CloseButton:hover {
   color: #ffffff;
 }
 
-QTreeWidget {
-  background: transparent;
-  border: 0;
-  color: #b8c2d4;
-  font-size: 12px;
-  outline: 0;
-  show-decoration-selected: 1;
-}
-
-QTreeWidget::item {
-  min-height: 28px;
-  border-radius: 7px;
-  padding: 3px 6px;
-  margin: 1px 0;
-}
-
-QTreeWidget::item:hover {
-  background: rgba(86, 138, 242, 0.11);
-  color: #eaf1ff;
-}
-
-QTreeWidget::item:selected {
-  color: #ffffff;
-  background: rgba(86, 138, 242, 0.32);
-}
-
-QHeaderView::section {
-  background: transparent;
-  border: 0;
-  color: #69788f;
-  font-weight: 800;
-  font-size: 11px;
-  padding: 4px 6px 8px 6px;
-}
-
 QGraphicsView {
   background: #1b1e23;
   border: 0;
@@ -146,8 +111,7 @@ QPlainTextEdit {
 }
 
 QGraphicsView,
-QPlainTextEdit,
-QTreeWidget {
+QPlainTextEdit {
   selection-background-color: rgba(86, 138, 242, 0.38);
 }
 

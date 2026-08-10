@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -16,8 +16,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFileDialog,
     QSplitter,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -45,6 +43,11 @@ class TitleBar(QWidget):
         layout.setContentsMargins(14, 0, 8, 0)
         layout.setSpacing(10)
 
+        self.icon_label = QLabel('')
+        self.icon_label.setObjectName('TitleIcon')
+        self.icon_label.setFixedSize(24, 24)
+        self.icon_label.setScaledContents(True)
+
         self.title = QLabel('shitview')
         self.title.setObjectName('Title')
         self.subtitle = QLabel('')
@@ -54,6 +57,7 @@ class TitleBar(QWidget):
         title_box.setSpacing(0)
         title_box.addWidget(self.title)
         title_box.addWidget(self.subtitle)
+        layout.addWidget(self.icon_label)
         layout.addLayout(title_box, 1)
 
         self.btn_open = self._make_button('Open', 'OpenButton', width=58)
@@ -80,6 +84,11 @@ class TitleBar(QWidget):
 
     def set_subtitle(self, text: str) -> None:
         self.subtitle.setText(text)
+
+    def set_icon(self, icon_path: Path) -> None:
+        pixmap = QPixmap(str(icon_path))
+        if not pixmap.isNull():
+            self.icon_label.setPixmap(pixmap)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -129,6 +138,9 @@ class MainWindow:
         self.engine = engine
         self.window = QMainWindow()
         self.window.setWindowTitle('shitview')
+        self.icon_path = _app_icon_path()
+        if self.icon_path is not None:
+            self.window.setWindowIcon(QIcon(str(self.icon_path)))
         self.window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.window.setStyleSheet(APP_STYLESHEET)
@@ -149,6 +161,8 @@ class MainWindow:
         shell_layout.setSpacing(0)
 
         self.title_bar = TitleBar(shell)
+        if self.icon_path is not None:
+            self.title_bar.set_icon(self.icon_path)
         self.title_bar.set_subtitle(str(self.engine.root))
         self.title_bar.open_clicked.connect(self._open_folder)
         self.title_bar.minimize_clicked.connect(self.window.showMinimized)
@@ -166,24 +180,18 @@ class MainWindow:
         splitter.setChildrenCollapsible(False)
         body_layout.addWidget(splitter, 1)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['Project', 'Last modified'])
-
         self.canvas = ZoomableGraphicsView()
         self.inspector = QPlainTextEdit()
         self.inspector.setReadOnly(True)
 
-        left_panel = self._make_panel('PROJECT', self.tree)
         center_panel = self._make_panel('GRAPH', self.canvas)
         right_panel = self._make_panel('ACTIVITY', self.inspector)
 
-        splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 1)
-        splitter.setSizes([210, 1120, 230])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([1240, 260])
 
         self.status_label = QLabel('Ready')
         self.status_label.setObjectName('StatusLabel')
@@ -286,7 +294,6 @@ class MainWindow:
 
     def _on_snapshot(self, snapshot) -> None:
         self.current_snapshot = snapshot
-        self._render_tree(snapshot)
         self.canvas_widget.render_snapshot(snapshot)
         self.title_bar.set_subtitle(str(self.engine.root))
         self.status_label.setText(f'Indexed {len(snapshot.nodes)} nodes')
@@ -330,30 +337,15 @@ class MainWindow:
             details.extend(['', f"Labels\n{', '.join(node.labels)}"])
         self.inspector.setPlainText('\n'.join(details))
 
-    def _render_tree(self, snapshot) -> None:
-        from shitview.core.time_format import format_relative_time
 
-        self.tree.clear()
-        nodes = snapshot.nodes
-        root = nodes[snapshot.root]
-        root_item = QTreeWidgetItem([root.name or root.path, format_relative_time(root.mtime)])
-        root_item.setToolTip(0, root.path)
-        self.tree.addTopLevelItem(root_item)
-        self._add_children(root_item, snapshot, root.path)
-        self.tree.expandToDepth(2)
-        self.tree.resizeColumnToContents(0)
-
-    def _add_children(self, parent_item, snapshot, path: str) -> None:
-        from PySide6.QtWidgets import QTreeWidgetItem
-        from shitview.core.time_format import format_relative_time
-
-        nodes = snapshot.nodes
-        for child_id in nodes[path].children:
-            node = nodes[child_id]
-            item = QTreeWidgetItem([node.name, format_relative_time(node.mtime)])
-            item.setToolTip(0, node.path)
-            parent_item.addChild(item)
-            if node.children:
-                self._add_children(item, snapshot, node.path)
+def _app_icon_path() -> Path | None:
+    candidates = [
+        Path.cwd() / 'resouce' / 'shitview.jpg',
+        Path(__file__).resolve().parents[3] / 'resouce' / 'shitview.jpg',
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 

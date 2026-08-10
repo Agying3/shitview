@@ -20,7 +20,7 @@ class FolderAnalysis:
     leaf_count: int
 
 
-def analyze_folder(root: str | Path, max_nodes: int = 420) -> FolderAnalysis:
+def analyze_folder(root: str | Path, max_nodes: int = 500) -> FolderAnalysis:
     root_path = Path(root).expanduser().resolve()
     snapshot = FileSystemScanner(root_path).scan()
     graph = build_layered_graph(snapshot, max_nodes=max_nodes)
@@ -44,7 +44,7 @@ def open_shitview(root: str | Path = ".", polling_interval: float = 1.0) -> None
     run_qt_app(engine)
 
 
-def summarize_folder(root: str | Path, max_nodes: int = 420) -> dict[str, object]:
+def summarize_folder(root: str | Path, max_nodes: int = 500) -> dict[str, object]:
     analysis = analyze_folder(root, max_nodes=max_nodes)
     return {
         "root": str(analysis.root),

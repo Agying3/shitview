@@ -12,6 +12,9 @@ class ZoomableGraphicsView:
                 super().__init__()
                 self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                 self.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+                self.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground)
+                self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
+                self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
                 self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
                 self._panning = False
                 self._pan_start = None

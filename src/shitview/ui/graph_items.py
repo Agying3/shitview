@@ -18,32 +18,40 @@ class GraphGroupItem:
                 self.child_items = children
                 self.on_bounds_changed = bounds_callback
                 self.current_rect = QRectF(graph_group.x, graph_group.y, graph_group.width, graph_group.height)
-                self.padding_x = 42.0
-                self.padding_top = 82.0
-                self.padding_bottom = 34.0
+                self.padding_x = 58.0
+                self.padding_top = 104.0
+                self.padding_bottom = 48.0
                 self.branch_index = graph_group.branch_index
-                self.setBrush(QColor(31, 35, 43, 62))
+                self.setBrush(QColor(31, 35, 43, 96))
                 border = QColor(_group_border(graph_group))
-                border.setAlpha(138)
-                pen = QPen(border, 1.15)
+                border.setAlpha(188)
+                pen = QPen(border, 1.8)
                 pen.setStyle(Qt.PenStyle.SolidLine)
                 self.setPen(pen)
                 self.setZValue(-20 + graph_group.depth)
 
-                self.title = QGraphicsSimpleTextItem(_shorten(graph_group.name, 28), self)
-                title_font = QFont("Segoe UI", 9)
-                title_font.setPixelSize(12)
+                self.header = QGraphicsPathItem(self)
+                self.header.setZValue(-18 + graph_group.depth)
+                self.header.setPen(QPen(QColor(255, 255, 255, 0), 0))
+                self.header.setFlag(self.header.GraphicsItemFlag.ItemIgnoresTransformations, True)
+
+                self.rail = QGraphicsPathItem(self)
+                self.rail.setZValue(-17 + graph_group.depth)
+                self.rail.setPen(QPen(QColor(_group_accent(graph_group)), 2.2))
+
+                self.title = QGraphicsSimpleTextItem(_shorten(graph_group.name, 10), self)
+                title_font = QFont("Microsoft YaHei UI", 9)
+                title_font.setPixelSize(18)
                 title_font.setBold(True)
                 self.title.setFont(title_font)
-                self.title.setBrush(QColor(_group_accent(graph_group)))
+                self.title.setBrush(QColor("#f4f8ff"))
                 self.title.setFlag(self.title.GraphicsItemFlag.ItemIgnoresTransformations, True)
 
                 self.meta = QGraphicsSimpleTextItem("", self)
-                meta_font = QFont("Segoe UI", 8)
+                meta_font = QFont("Microsoft YaHei UI", 8)
                 meta_font.setPixelSize(10)
                 self.meta.setFont(meta_font)
-                self.meta.setBrush(QColor("#a0aec0"))
-                self.meta.setFlag(self.meta.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                self.meta.setBrush(QColor("#9fb2cc"))
                 self.update_bounds()
 
             def update_bounds(self, notify: bool = True) -> None:
@@ -61,17 +69,35 @@ class GraphGroupItem:
                     )
 
                 path = QPainterPath()
-                path.addRoundedRect(rect, 18, 18)
+                path.addRoundedRect(rect, 22, 22)
                 glass = QLinearGradient(rect.topLeft(), rect.bottomRight())
-                glass.setColorAt(0.0, QColor(255, 255, 255, 16))
-                glass.setColorAt(0.18, QColor(48, 56, 70, 72))
-                glass.setColorAt(1.0, QColor(20, 24, 31, 54))
+                glass.setColorAt(0.0, QColor(255, 255, 255, 28))
+                glass.setColorAt(0.20, QColor(48, 56, 70, 116))
+                glass.setColorAt(1.0, QColor(20, 24, 31, 84))
                 self.setBrush(glass)
                 self.current_rect = rect
                 self.setPath(path)
-                self.title.setPos(rect.x() + 18, rect.y() + 15)
+
+                header_rect = QRectF(0, 0, min(280.0, rect.width() - 28), 54.0)
+                header_path = QPainterPath()
+                header_path.addRoundedRect(header_rect, 14, 14)
+                header_gradient = QLinearGradient(header_rect.topLeft(), header_rect.bottomRight())
+                accent = QColor(_group_accent(self.group))
+                header_gradient.setColorAt(0.0, QColor(255, 255, 255, 28))
+                accent.setAlpha(56)
+                header_gradient.setColorAt(0.36, accent)
+                header_gradient.setColorAt(1.0, QColor(12, 18, 28, 126))
+                self.header.setPath(header_path)
+                self.header.setBrush(header_gradient)
+                self.header.setPos(rect.x() + 14, rect.y() + 13)
+
+                rail_path = QPainterPath()
+                rail_path.moveTo(rect.x() + 25, rect.y() + 68)
+                rail_path.lineTo(min(rect.right() - 26, rect.x() + 392), rect.y() + 68)
+                self.rail.setPath(rail_path)
+                self.title.setPos(rect.x() + 24, rect.y() + 18)
                 self.meta.setText(f"{self.group.child_count} items - modified {format_relative_time(self.group.mtime)}")
-                self.meta.setPos(rect.x() + 18, rect.y() + 36)
+                self.meta.setPos(rect.x() + 24, rect.y() + 46)
                 if notify and self.on_bounds_changed is not None:
                     self.on_bounds_changed(self)
 
@@ -79,17 +105,19 @@ class GraphGroupItem:
 
 
 class GraphEdgeItem:
-    def __new__(cls, source, target):
-        from PySide6.QtCore import Qt
+    def __new__(cls, source, target, obstacle_items=None, lane_index: int = 0):
+        from PySide6.QtCore import QRectF, Qt
         from PySide6.QtGui import QColor, QPainterPath, QPen
         from PySide6.QtWidgets import QGraphicsPathItem
 
         class _GraphEdgeItem(QGraphicsPathItem):
-            def __init__(self, source_item, target_item) -> None:
+            def __init__(self, source_item, target_item, obstacles, edge_lane: int) -> None:
                 super().__init__()
                 self.source_item = source_item
                 self.target_item = target_item
-                pen = QPen(QColor(93, 113, 142, 132), 1.65)
+                self.obstacle_items = obstacles or []
+                self.lane_index = edge_lane
+                pen = QPen(QColor(70, 244, 162, 172), 1.9)
                 pen.setCapStyle(Qt.PenCapStyle.RoundCap)
                 pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 self.setPen(pen)
@@ -99,24 +127,80 @@ class GraphEdgeItem:
             def update_path(self) -> None:
                 source = self.source_item.sceneBoundingRect()
                 target = self.target_item.sceneBoundingRect()
+                self._current_obstacle_rects = self._obstacle_rects()
                 start_x = source.right()
                 start_y = source.center().y()
-                end_x = target.left()
-                end_y = target.center().y()
-                handle = max(48.0, abs(end_x - start_x) * 0.42)
+                end_x = target.center().x()
+                end_y = target.top()
+                lane_offset = (self.lane_index % 18) * 18.0
+                top_lane = min(source.top(), target.top(), self._obstacle_top()) - 72.0 - lane_offset
+                pre_end_y = end_y - 30.0 - (self.lane_index % 4) * 10.0
+                exit_x = self._free_exit_x(source, start_y, top_lane)
+                enter_x = self._free_enter_x(target, top_lane, pre_end_y)
                 path = QPainterPath()
                 path.moveTo(start_x, start_y)
-                path.cubicTo(start_x + handle, start_y, end_x - handle, end_y, end_x, end_y)
+                path.lineTo(exit_x, start_y)
+                path.lineTo(exit_x, top_lane)
+                path.lineTo(enter_x, top_lane)
+                path.lineTo(enter_x, pre_end_y)
+                path.lineTo(end_x, pre_end_y)
+                path.lineTo(end_x, end_y)
                 self.setPath(path)
+                self._current_obstacle_rects = None
 
-        return _GraphEdgeItem(source, target)
+            def _obstacle_top(self) -> float:
+                rects = getattr(self, "_current_obstacle_rects", None) or self._obstacle_rects()
+                if not rects:
+                    return min(self.source_item.sceneBoundingRect().top(), self.target_item.sceneBoundingRect().top())
+                return min(rect.top() for rect in rects)
+
+            def _free_exit_x(self, source, start_y: float, top_lane: float) -> float:
+                for step in range(12):
+                    candidate = source.right() + 28.0 + step * 34.0
+                    if self._clear_segment(source.right(), start_y, candidate, start_y) and self._clear_segment(candidate, start_y, candidate, top_lane):
+                        return candidate
+                return source.right() + 120.0 + (self.lane_index % 8) * 24.0
+
+            def _free_enter_x(self, target, top_lane: float, pre_end_y: float) -> float:
+                offsets = [0.0, -54.0, 54.0, -108.0, 108.0, -162.0, 162.0, -240.0, 240.0, -330.0, 330.0, -450.0, 450.0, -600.0, 600.0]
+                for offset in offsets:
+                    candidate = target.center().x() + offset
+                    if self._clear_segment(candidate, top_lane, candidate, pre_end_y) and self._clear_segment(candidate, pre_end_y, target.center().x(), pre_end_y):
+                        return candidate
+                return target.center().x()
+
+            def _clear_segment(self, x1: float, y1: float, x2: float, y2: float) -> bool:
+                left = min(x1, x2) - 5.0
+                top = min(y1, y2) - 5.0
+                width = abs(x2 - x1) + 10.0
+                height = abs(y2 - y1) + 10.0
+                segment = QRectF(left, top, max(width, 10.0), max(height, 10.0))
+                rects = getattr(self, "_current_obstacle_rects", None) or self._obstacle_rects()
+                return not any(segment.intersects(rect) for rect in rects)
+
+            def _obstacle_rects(self) -> list:
+                rects = []
+                for entry in self.obstacle_items:
+                    if isinstance(entry, tuple) and len(entry) == 2:
+                        item, rect = entry
+                        if item is self.source_item or item is self.target_item:
+                            continue
+                        rects.append(rect)
+                        continue
+                    item = entry
+                    if item is self.source_item or item is self.target_item:
+                        continue
+                    rects.append(item.sceneBoundingRect().adjusted(-14.0, -14.0, 14.0, 14.0))
+                return rects
+
+        return _GraphEdgeItem(source, target, obstacle_items, lane_index)
 
 
 class GraphNodeItem:
-    def __new__(cls, node: GraphNode, on_select=None, on_move=None, on_position_changed=None):
-        from PySide6.QtCore import QEasingCurve, QRectF, QVariantAnimation
+    def __new__(cls, node: GraphNode, on_select=None, on_move=None, on_position_changed=None, keep_title_readable: bool = False):
+        from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QVariantAnimation
         from PySide6.QtGui import QColor, QFont, QPainterPath, QPen
-        from PySide6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsItem, QGraphicsPathItem, QGraphicsSimpleTextItem
+        from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsSimpleTextItem
 
         class _GraphNodeItem(QGraphicsPathItem):
             def __init__(
@@ -125,6 +209,7 @@ class GraphNodeItem:
                 select_callback=None,
                 move_callback=None,
                 position_changed_callback=None,
+                readable_title: bool = False,
             ) -> None:
                 path = QPainterPath()
                 path.addRoundedRect(QRectF(0, 0, graph_node.width, graph_node.height), 12, 12)
@@ -135,6 +220,10 @@ class GraphNodeItem:
                 self.on_select = select_callback
                 self.on_move = move_callback
                 self.on_position_changed = position_changed_callback
+                self.keep_title_readable = readable_title
+                self.child_items = []
+                self._last_pos = None
+                self._syncing_tree = False
                 self.setPos(graph_node.x, graph_node.y)
                 self.setBrush(QColor(_node_fill(graph_node)))
                 self.setPen(QPen(QColor(_node_border(graph_node)), 1.0 if graph_node.kind is NodeKind.FILE else 1.3))
@@ -146,15 +235,14 @@ class GraphNodeItem:
                 self.setToolTip(f"{graph_node.path}\nLast modified {format_relative_time(graph_node.mtime)}")
                 self.setData(0, graph_node.path)
                 self.setZValue(20)
-                self.shadow = QGraphicsDropShadowEffect()
-                self.shadow.setBlurRadius(18)
-                self.shadow.setOffset(0, 7)
-                self.shadow.setColor(QColor(0, 0, 0, 92))
-                self.setGraphicsEffect(self.shadow)
                 self.hover_animation = QVariantAnimation()
                 self.hover_animation.setDuration(150)
                 self.hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
                 self.hover_animation.valueChanged.connect(self._set_animated_scale)
+                self.move_animation = QVariantAnimation()
+                self.move_animation.setDuration(150)
+                self.move_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+                self.move_animation.valueChanged.connect(self._set_animated_pos)
                 self._add_contents()
                 self.setTransformOriginPoint(graph_node.width / 2, graph_node.height / 2)
 
@@ -164,6 +252,15 @@ class GraphNodeItem:
             def add_group(self, group) -> None:
                 self.groups.append(group)
 
+            def add_child_node(self, child) -> None:
+                self.child_items.append(child)
+
+            def animate_to(self, x: float, y: float) -> None:
+                self.move_animation.stop()
+                self.move_animation.setStartValue(self.pos())
+                self.move_animation.setEndValue(QPointF(x, y))
+                self.move_animation.start()
+
             def update_relations(self, notify: bool = True) -> None:
                 for edge in self.edges:
                     edge.update_path()
@@ -172,6 +269,12 @@ class GraphNodeItem:
 
             def itemChange(self, change, value):
                 if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+                    old_pos = self._last_pos
+                    self._last_pos = self.pos()
+                    if old_pos is not None and not self._syncing_tree:
+                        delta = self.pos() - old_pos
+                        if abs(delta.x()) > 0.01 or abs(delta.y()) > 0.01:
+                            self._move_descendants(delta)
                     self.update_relations()
                     if self.on_position_changed is not None:
                         self.on_position_changed(self)
@@ -183,16 +286,26 @@ class GraphNodeItem:
                 super().mouseReleaseEvent(event)
                 if self.on_move is not None:
                     self.on_move(self.node.path, self.pos().x(), self.pos().y())
+                    self._save_descendant_positions()
+
+            def _move_descendants(self, delta) -> None:
+                for child in self.child_items:
+                    child._syncing_tree = True
+                    child.setPos(child.pos() + delta)
+                    child._syncing_tree = False
+                    child.update_relations()
+                    child._move_descendants(delta)
+
+            def _save_descendant_positions(self) -> None:
+                for child in self.child_items:
+                    if child.on_move is not None:
+                        child.on_move(child.node.path, child.pos().x(), child.pos().y())
+                    child._save_descendant_positions()
 
             def hoverEnterEvent(self, event) -> None:
                 self._animate_scale(1.055)
                 self.setZValue(38)
-                self.setPen(QPen(QColor("#60a5fa"), 1.8))
-                self.shadow.setBlurRadius(30)
-                self.shadow.setOffset(0, 10)
-                glow = QColor(_accent(self.node))
-                glow.setAlpha(96)
-                self.shadow.setColor(glow)
+                self.setPen(QPen(QColor("#4af0a4"), 2.0))
                 self.update_relations()
                 super().hoverEnterEvent(event)
 
@@ -200,9 +313,6 @@ class GraphNodeItem:
                 self._animate_scale(1.0)
                 self.setZValue(20)
                 self.setPen(QPen(QColor(_node_border(self.node)), 1.2))
-                self.shadow.setBlurRadius(18)
-                self.shadow.setOffset(0, 7)
-                self.shadow.setColor(QColor(0, 0, 0, 92))
                 self.update_relations()
                 super().hoverLeaveEvent(event)
 
@@ -214,6 +324,12 @@ class GraphNodeItem:
 
             def _set_animated_scale(self, value) -> None:
                 self.setScale(float(value))
+                self.update_relations(notify=False)
+
+            def _set_animated_pos(self, value) -> None:
+                self._syncing_tree = True
+                self.setPos(value)
+                self._syncing_tree = False
                 self.update_relations(notify=False)
 
             def _add_contents(self) -> None:
@@ -231,37 +347,36 @@ class GraphNodeItem:
                 shine.setPen(QPen(QColor(255, 255, 255, 0), 0))
                 shine.setZValue(21)
 
-                title = QGraphicsSimpleTextItem(_shorten(self.node.name, 32), self)
-                title_font = QFont("Segoe UI", 9)
-                title_font.setPixelSize(12)
+                title = QGraphicsSimpleTextItem(_node_title(self.node, self.keep_title_readable), self)
+                title_font = QFont("Microsoft YaHei UI", 9)
+                title_font.setPixelSize(16 if self.keep_title_readable else 16)
                 title_font.setBold(self.node.kind is NodeKind.DIRECTORY)
                 title.setFont(title_font)
                 title.setBrush(QColor("#e7eef9"))
-                title.setFlag(title.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                title.setPos(22, 16)
+                if self.keep_title_readable:
+                    title.setFlag(title.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                title.setPos(24, 18)
                 title.setZValue(22)
 
                 meta_text = f"{_node_meta(self.node)} - {format_relative_time(self.node.mtime)}"
                 meta = QGraphicsSimpleTextItem(meta_text, self)
-                meta_font = QFont("Segoe UI", 8)
-                meta_font.setPixelSize(10)
+                meta_font = QFont("Microsoft YaHei UI", 8)
+                meta_font.setPixelSize(12)
                 meta.setFont(meta_font)
                 meta.setBrush(QColor("#8ea2bd"))
-                meta.setFlag(meta.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                meta.setPos(22, self.node.height - 34)
+                meta.setPos(24, self.node.height - 36)
                 meta.setZValue(22)
 
                 if self.node.kind is NodeKind.DIRECTORY:
                     badge = QGraphicsSimpleTextItem("DIR", self)
-                    badge_font = QFont("Segoe UI", 7)
+                    badge_font = QFont("Microsoft YaHei UI", 7)
                     badge_font.setPixelSize(9)
                     badge.setFont(badge_font)
                     badge.setBrush(QColor(_accent(self.node)))
-                    badge.setFlag(badge.GraphicsItemFlag.ItemIgnoresTransformations, True)
                     badge.setPos(self.node.width - 38, 14)
                     badge.setZValue(22)
 
-        return _GraphNodeItem(node, on_select, on_move, on_position_changed)
+        return _GraphNodeItem(node, on_select, on_move, on_position_changed, keep_title_readable)
 
 
 def _node_fill(node: GraphNode) -> str:
@@ -302,6 +417,19 @@ def _shorten(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "..."
+
+
+def _node_title(node: GraphNode, compact: bool) -> str:
+    if not compact:
+        return _shorten(node.name, 32)
+    if node.kind is NodeKind.DIRECTORY:
+        return _shorten(node.name, 8)
+    name = node.name
+    if "." in name:
+        stem, suffix = name.rsplit(".", 1)
+        if len(suffix) <= 5:
+            return _shorten(stem, 6) + "." + _shorten(suffix, 3)
+    return _shorten(name, 9)
 
 
 def _group_border(group: GraphGroup) -> str:

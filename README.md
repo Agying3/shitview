@@ -1,8 +1,18 @@
 # shitview
 
-Dynamic project folder peep-hole map with a Python core and Qt GUI.
+Dynamic project folder map. The long-term product path is Rust + Slint; the Python + PySide6 implementation remains the migration reference.
 
-## Run
+## Rust Phase 0
+
+From `rust/` on Windows with MSYS2 MinGW:
+
+```powershell
+.\run_phase0.bat
+```
+
+The current Slint window is a synthetic 1,000/5,000/10,000-node renderer baseline. It does not yet index a real folder.
+
+## Python Reference Run
 
 ```powershell
 python -m shitview.main H:\some\project

@@ -16,7 +16,7 @@ class MapCanvas:
     layout_store: object | None = None
 
     def render_snapshot(self, snapshot: FileTreeSnapshot) -> None:
-        from PySide6.QtCore import QRectF, Qt
+        from PySide6.QtCore import Qt
 
         layout = build_layered_graph(snapshot)
         self.group_items = []
@@ -26,10 +26,13 @@ class MapCanvas:
         scene = self._make_scene(layout)
         self._draw_background(scene, layout)
         node_items = self._draw_nodes(scene, layout)
+        self._bind_tree_relations(layout, node_items)
         self._draw_groups(scene, layout, node_items)
         self._draw_edges(scene, layout, node_items)
         self.view.setScene(scene)
-        focus_rect = self._viewport_rect(layout)
+        scene.setSceneRect(scene.itemsBoundingRect().adjusted(-120.0, -120.0, 120.0, 120.0))
+        self.view.resetTransform()
+        focus_rect = scene.itemsBoundingRect().adjusted(-90.0, -90.0, 90.0, 90.0)
         self.view.fitInView(focus_rect, Qt.AspectRatioMode.KeepAspectRatio)
         self.view.centerOn(focus_rect.center())
 
@@ -97,8 +100,8 @@ class MapCanvas:
             for child_item in child_items:
                 child_item.add_group(group_item)
             scene.addItem(group_item)
-        initial_iterations = 4 if len(node_items) > 300 else 10
-        self._resolve_layout_conflicts(max_iterations=initial_iterations, max_push=128.0)
+        if len(node_items) <= 180:
+            self._resolve_layout_conflicts(max_iterations=4, max_push=74.0, include_groups=False)
 
     def _draw_nodes(self, scene, layout: GraphLayout) -> dict[str, object]:
         items = {}
@@ -109,6 +112,7 @@ class MapCanvas:
                 on_select=self.on_select,
                 on_move=self._on_node_moved,
                 on_position_changed=self._on_node_position_changed,
+                keep_title_readable=len(layout.nodes) <= 120,
             )
             if node.path in saved_positions:
                 x, y = saved_positions[node.path]
@@ -118,6 +122,13 @@ class MapCanvas:
         self.node_items = items
         return items
 
+    def _bind_tree_relations(self, layout: GraphLayout, node_items: dict[str, object]) -> None:
+        for edge in layout.edges:
+            source = node_items.get(edge.source)
+            target = node_items.get(edge.target)
+            if source is not None and target is not None:
+                source.add_child_node(target)
+
     def _on_node_moved(self, node_path: str, x: float, y: float) -> None:
         if self.layout_store is not None:
             self.layout_store.save_position(node_path, x, y)
@@ -125,18 +136,26 @@ class MapCanvas:
     def _on_node_position_changed(self, item) -> None:
         if self._resolving_layout:
             return
+        if getattr(item, "_syncing_tree", False):
+            return
         self._position_change_counter = (getattr(self, "_position_change_counter", 0) + 1) % 3
         if self._position_change_counter != 0:
             return
-        self._resolve_layout_conflicts(changed_item=item, max_iterations=4, max_push=58.0)
+        self._resolve_layout_conflicts(changed_item=item, max_iterations=5, max_push=42.0, include_groups=True)
 
     def _draw_edges(self, scene, layout: GraphLayout, node_items: dict[str, object]) -> None:
-        for edge in layout.edges:
+        obstacle_items = list(node_items.values())
+        edge_obstacles = (
+            [(item, item.sceneBoundingRect().adjusted(-14.0, -14.0, 14.0, 14.0)) for item in obstacle_items]
+            if len(obstacle_items) > 180
+            else obstacle_items
+        )
+        for edge_index, edge in enumerate(layout.edges):
             source = node_items.get(edge.source)
             target = node_items.get(edge.target)
             if source is None or target is None:
                 continue
-            edge_item = GraphEdgeItem(source, target)
+            edge_item = GraphEdgeItem(source, target, obstacle_items=edge_obstacles, lane_index=edge_index)
             source.add_edge(edge_item)
             target.add_edge(edge_item)
             scene.addItem(edge_item)
@@ -156,15 +175,38 @@ class MapCanvas:
         pad_y = 56.0 + leaf_factor * 18.0
         return rect.adjusted(-pad_x, -pad_y, pad_x, pad_y)
 
+    def _readable_focus_rect(self, bounds, node_count: int):
+        from PySide6.QtCore import QRectF
+
+        if node_count <= 80:
+            max_width = 3200.0
+            max_height = 1900.0
+        elif node_count <= 220:
+            max_width = 5000.0
+            max_height = 3100.0
+        else:
+            max_width = 7000.0
+            max_height = 4300.0
+
+        width = min(bounds.width() + 180.0, max_width)
+        height = min(bounds.height() + 180.0, max_height)
+        return QRectF(bounds.left() - 90.0, bounds.top() - 90.0, width, height)
+
     def _on_group_bounds_changed(self, changed_group) -> None:
         if self._resolving_layout:
             return
-        self._resolve_layout_conflicts(changed_item=changed_group)
+        self._resolve_layout_conflicts(changed_item=changed_group, include_groups=True)
 
-    def _resolve_layout_conflicts(self, changed_item=None, max_iterations: int = 8, max_push: float = 84.0) -> None:
+    def _resolve_layout_conflicts(
+        self,
+        changed_item=None,
+        max_iterations: int = 8,
+        max_push: float = 84.0,
+        include_groups: bool = True,
+    ) -> None:
         if not getattr(self, "group_items", None) and not getattr(self, "node_items", None):
             return
-        colliders = self._collision_items()
+        colliders = self._collision_items(include_groups=include_groups)
         if not colliders:
             return
         if changed_item is not None:
@@ -176,7 +218,7 @@ class MapCanvas:
         self._resolving_layout = True
         try:
             if changed_item is not None:
-                self._resolve_local_conflicts(colliders, changed_item, max_iterations, max_push)
+                self._resolve_local_conflicts(colliders, changed_item, max_iterations, max_push, animated=True)
             else:
                 self._resolve_global_conflicts(colliders, max_iterations, max_push)
         finally:
@@ -198,6 +240,7 @@ class MapCanvas:
         changed_item,
         max_iterations: int,
         max_push: float,
+        animated: bool = False,
     ) -> None:
         affected = {changed_item}
         for _ in range(max_iterations):
@@ -212,11 +255,11 @@ class MapCanvas:
                     if key in seen:
                         continue
                     seen.add(key)
-                    moved = self._separate_pair(current, other, max_push=max_push, preferred=current)
+                    moved = self._separate_pair(current, other, max_push=max_push, preferred=current, animated=animated)
                     moved_items.update(moved)
             affected = moved_items
 
-    def _separate_pair(self, current, other, max_push: float, preferred=None) -> set[object]:
+    def _separate_pair(self, current, other, max_push: float, preferred=None, animated: bool = False) -> set[object]:
         if not _should_separate(current, other):
             return set()
         current_rect = _item_rect(current)
@@ -225,16 +268,17 @@ class MapCanvas:
         if overlap.isNull() or overlap.width() <= 0 or overlap.height() <= 0:
             return set()
         dx, dy = _separation_delta(current_rect, other_rect, max_push=max_push)
-        return self._push_items(current, other, dx, dy, preferred=preferred)
+        return self._push_items(current, other, dx, dy, preferred=preferred, animated=animated)
 
-    def _collision_items(self) -> list[object]:
-        items = list(getattr(self, "group_items", []))
-        items.extend(getattr(self, "node_items", {}).values())
+    def _collision_items(self, include_groups: bool = True) -> list[object]:
+        items = list(getattr(self, "node_items", {}).values())
+        if include_groups:
+            items.extend(getattr(self, "group_items", []))
         return items
 
-    def _push_items(self, current, other, dx: float, dy: float, preferred=None) -> set[object]:
-        current_is_group = hasattr(current, "child_items")
-        other_is_group = hasattr(other, "child_items")
+    def _push_items(self, current, other, dx: float, dy: float, preferred=None, animated: bool = False) -> set[object]:
+        current_is_group = _is_group_item(current)
+        other_is_group = _is_group_item(other)
         if current_is_group != other_is_group:
             if preferred is current:
                 target = other
@@ -246,35 +290,49 @@ class MapCanvas:
                 target = other if current_is_group else current
                 move_dx = -dx if current_is_group else dx
                 move_dy = -dy if current_is_group else dy
-            self._apply_item_motion(target, move_dx, move_dy)
+            self._apply_item_motion(target, move_dx, move_dy, animated=animated)
             return {target}
         if preferred is current:
-            self._apply_item_motion(other, -dx, -dy)
+            self._apply_item_motion(other, -dx, -dy, animated=animated)
             return {other}
         if preferred is other:
-            self._apply_item_motion(current, dx, dy)
+            self._apply_item_motion(current, dx, dy, animated=animated)
             return {current}
         if not current_is_group and not other_is_group:
-            self._apply_item_motion(current, dx * 0.5, dy * 0.5)
-            self._apply_item_motion(other, -dx * 0.5, -dy * 0.5)
+            self._apply_item_motion(current, dx * 0.5, dy * 0.5, animated=animated)
+            self._apply_item_motion(other, -dx * 0.5, -dy * 0.5, animated=animated)
             return {current, other}
         if current_is_group and other_is_group:
-            self._apply_item_motion(current, dx * 0.5, dy * 0.5)
-            self._apply_item_motion(other, -dx * 0.5, -dy * 0.5)
+            self._apply_item_motion(current, dx * 0.5, dy * 0.5, animated=animated)
+            self._apply_item_motion(other, -dx * 0.5, -dy * 0.5, animated=animated)
             return {current, other}
         return set()
 
-    def _apply_item_motion(self, item, dx: float, dy: float) -> None:
+    def _apply_item_motion(self, item, dx: float, dy: float, animated: bool = False) -> None:
         if abs(dx) < 0.35 and abs(dy) < 0.35:
             return
-        if hasattr(item, "child_items"):
+        if _is_group_item(item):
             for child in item.child_items:
-                child.setPos(child.pos().x() + dx, child.pos().y() + dy)
+                if animated and hasattr(child, "animate_to"):
+                    child.animate_to(child.pos().x() + dx, child.pos().y() + dy)
+                else:
+                    if hasattr(child, "_syncing_tree"):
+                        child._syncing_tree = True
+                    child.setPos(child.pos().x() + dx, child.pos().y() + dy)
+                    if hasattr(child, "_syncing_tree"):
+                        child._syncing_tree = False
             item.update_bounds(notify=False)
             for child in item.child_items:
                 child.update_relations(notify=False)
             return
-        item.setPos(item.pos().x() + dx, item.pos().y() + dy)
+        if hasattr(item, "_syncing_tree"):
+            item._syncing_tree = True
+        if animated and hasattr(item, "animate_to"):
+            item.animate_to(item.pos().x() + dx, item.pos().y() + dy)
+        else:
+            item.setPos(item.pos().x() + dx, item.pos().y() + dy)
+        if hasattr(item, "_syncing_tree"):
+            item._syncing_tree = False
         item.update_relations(notify=False)
 
 
@@ -285,6 +343,11 @@ def _item_rect(item):
     if hasattr(item, "node"):
         return rect.adjusted(-22.0, -18.0, 22.0, 18.0)
     return rect
+
+
+def _is_group_item(item) -> bool:
+    group_attr = getattr(item, "group", None)
+    return group_attr is not None and not callable(group_attr) and hasattr(item, "current_rect")
 
 
 class _SpatialIndex:
@@ -344,16 +407,26 @@ def _nearby_pairs(changed_item, spatial_index: _SpatialIndex):
 
 
 def _share_children(first, second) -> bool:
-    if not hasattr(first, "child_items") or not hasattr(second, "child_items"):
+    if not _is_group_item(first) or not _is_group_item(second):
         return False
     return bool(set(first.child_items).intersection(second.child_items))
 
 
+def _nested_groups(first, second) -> bool:
+    if not _is_group_item(first) or not _is_group_item(second):
+        return False
+    first_path = getattr(first.group, "path", "").replace("\\", "/")
+    second_path = getattr(second.group, "path", "").replace("\\", "/")
+    if not first_path or not second_path or first_path == second_path:
+        return False
+    return second_path.startswith(first_path + "/") or first_path.startswith(second_path + "/")
+
+
 def _should_separate(first, second) -> bool:
-    first_is_group = hasattr(first, "child_items")
-    second_is_group = hasattr(second, "child_items")
+    first_is_group = _is_group_item(first)
+    second_is_group = _is_group_item(second)
     if first_is_group and second_is_group:
-        return not _share_children(first, second)
+        return not (_share_children(first, second) or _nested_groups(first, second))
     if first_is_group:
         return second not in first.child_items
     if second_is_group:

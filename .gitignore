@@ -79,3 +79,6 @@ token*.json
 # ===== 编辑器 / IDE 本地配置 =====
 .idea/
 .vscode/
+
+# ===== 本地项目记忆 / 工作记录 =====
+docx/memory*.md
