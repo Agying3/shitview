@@ -26,6 +26,19 @@ pub struct ScanIssue {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexRecord {
+    pub path_key: Vec<u8>,
+    pub parent_path_key: Option<Vec<u8>>,
+    pub display_path: String,
+    pub display_name: String,
+    pub kind: NodeKind,
+    pub depth: usize,
+    pub size_bytes: u64,
+    pub modified_ns: Option<u128>,
+    pub stable_id: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScanStats {
     pub scanned_nodes: usize,

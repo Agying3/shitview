@@ -70,3 +70,35 @@ cargo run --package shitview-slint
 ```powershell
 cargo run --release --package shitview-storage --bin storage_bench -- 100000
 ```
+
+## Phase 1 indexer
+
+The native Slint app now opens a real project directory and runs the background indexer.
+
+```powershell
+$env:PATH='C:\msys64\mingw64\bin;' + $env:PATH
+cargo run --offline --package shitview-slint -- H:\some\project
+```
+
+The optional folder argument skips the picker. Without it, use `BROWSE` or enter a path in
+the window. The index database is stored outside the project under the platform application
+data directory. Project-local `.shitview/ignore` is supported in addition to `.gitignore`.
+
+Phase 1 provides bounded parallel traversal, a serialized SQLite/WAL writer, generation
+switching, pause/resume/cancel, resumable queue state, stable file identity, native file
+watching, and incremental create/modify/remove updates. Symlinks and junctions are recorded
+but never traversed.
+
+The Phase 2 canvas now rasterizes nodes, modules, orthogonal connectors, and the background grid
+in Rust into one RGBA image. Slint displays that image as one clipped, zoomable item; module
+labels are hidden below 42 percent zoom to keep dense scenes readable. The rasterizer benchmark
+currently covers 1K, 5K, and 10K synthetic scenes. Scene preparation runs off the UI thread;
+the Windows GUI reported 60 FPS at 1K and 59 FPS at 10K during the real GUI check.
+
+Current debug-build scene preparation times on the development machine are approximately 134 ms
+for 1K, 494 ms for 5K, and 1,046 ms for 10K. The 10K GUI working set was approximately 160 MB.
+Zoom and scroll render one image item; FPS is measured through Slint's rendering notifier.
+
+Phase 3 adds a uniform-grid hit index over rendered nodes. Click a node to show its path and
+selection outline. File nodes expose `OPEN SOURCE`; the app uses `SHITVIEW_EDITOR`, then
+`VISUAL`/`EDITOR`, and finally the platform default application.

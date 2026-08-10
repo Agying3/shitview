@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, ScrollView, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
 
 export struct SceneRect {
     x: float,
@@ -24,7 +24,7 @@ export struct SceneLabel {
 }
 
 export component AppWindow inherits Window {
-    title: "shitview Phase 0";
+    title: "shitview Phase 1";
     preferred-width: 1280px;
     preferred-height: 800px;
     min-width: 960px;
@@ -35,15 +35,43 @@ export component AppWindow inherits Window {
     in property <[SceneRect]> graph-modules;
     in property <[SceneSegment]> graph-segments;
     in property <[SceneLabel]> graph-labels;
+    in property <image> graph-image;
     in property <float> scene-width: 3200;
     in property <float> scene-height: 2200;
     in property <string> node-metric: "1,000";
     in property <string> primitive-metric: "0";
     in property <string> generation-metric: "0 ms";
+    in property <string> frame-metric: "--";
+    in-out property <string> project-path: "";
+    in property <string> status-title: "Synthetic scene ready";
+    in property <string> status-detail: "Choose a project folder to build its index";
+    in property <bool> indexing: false;
+    in property <bool> paused: false;
+    in property <bool> benchmark-active: true;
+    in property <string> selected-path: "";
+    in property <bool> selection-available: false;
+    in property <bool> selection-openable: false;
+    in property <bool> selection-pinned: false;
+    in property <float> selected-x: 0;
+    in property <float> selected-y: 0;
+    in property <float> selected-width: 0;
+    in property <float> selected-height: 0;
     in-out property <float> zoom: 0.72;
     in-out property <float> pulse: 0;
 
     callback select-density(int);
+    callback browse-project();
+    callback open-project(string);
+    callback pause-index();
+    callback resume-index();
+    callback cancel-index();
+    callback canvas-clicked(float, float);
+    callback canvas-pressed(float, float);
+    callback canvas-moved(float, float);
+    callback canvas-released(float, float);
+    callback open-selected();
+    callback pin-selected();
+    callback reset-layout();
     callback zoom-in();
     callback zoom-out();
 
@@ -88,6 +116,16 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle { horizontal-stretch: 1; background: transparent; }
+
+                LineEdit {
+                    width: 340px;
+                    text: root.project-path;
+                    placeholder-text: "Project folder";
+                    edited(text) => { root.project-path = text; }
+                    accepted(text) => { root.open-project(text); }
+                }
+                Button { text: "BROWSE"; clicked => { root.browse-project(); } }
+                Button { text: "OPEN"; clicked => { root.open-project(root.project-path); } }
 
                 Text { text: "DENSITY"; color: #718197; font-size: 10px; }
                 Button { text: "1K"; clicked => { root.select-density(1000); } }
@@ -142,6 +180,35 @@ export component AppWindow inherits Window {
                             Rectangle { horizontal-stretch: 1; background: transparent; }
                             Text { text: root.generation-metric; color: #61eaa3; font-size: 11px; }
                         }
+                        HorizontalBox {
+                            Text { text: "FPS"; color: #7f8c9d; font-size: 11px; }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Text { text: root.frame-metric; color: #61eaa3; font-size: 11px; }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: #2b323d; }
+
+                    VerticalBox {
+                        spacing: 8px;
+                        Text { text: "INDEX"; color: #718197; font-size: 10px; font-weight: 700; }
+                        Text { text: root.status-title; color: #d3dbe5; font-size: 12px; }
+                        Text { text: root.status-detail; color: #798697; font-size: 10px; wrap: word-wrap; }
+                        HorizontalBox {
+                            spacing: 6px;
+                            if root.indexing && !root.paused: Button {
+                                text: "PAUSE";
+                                clicked => { root.pause-index(); }
+                            }
+                            if root.indexing && root.paused: Button {
+                                text: "RESUME";
+                                clicked => { root.resume-index(); }
+                            }
+                            if root.indexing: Button {
+                                text: "CANCEL";
+                                clicked => { root.cancel-index(); }
+                            }
+                        }
                     }
 
                     Rectangle { height: 1px; background: #2b323d; }
@@ -153,6 +220,29 @@ export component AppWindow inherits Window {
                         Text { text: "Dependencies"; color: #798697; font-size: 12px; }
                         Text { text: "Activity"; color: #798697; font-size: 12px; }
                         Text { text: "Labels"; color: #798697; font-size: 12px; }
+                    }
+
+                    if root.selection-available: VerticalBox {
+                        spacing: 6px;
+                        Text { text: "SELECTED"; color: #718197; font-size: 10px; font-weight: 700; }
+                        Text { text: root.selected-path; color: #d3dbe5; font-size: 10px; wrap: word-wrap; }
+                        if root.selection-openable: Button {
+                            text: "OPEN SOURCE";
+                            clicked => { root.open-selected(); }
+                        }
+                        if !root.selection-pinned: Button {
+                            text: "PIN";
+                            clicked => { root.pin-selected(); }
+                        }
+                        if root.selection-pinned: Button {
+                            text: "UNPIN";
+                            clicked => { root.pin-selected(); }
+                        }
+                    }
+
+                    Button {
+                        text: "RESET LAYOUT";
+                        clicked => { root.reset-layout(); }
                     }
 
                     Rectangle { vertical-stretch: 1; background: transparent; }
@@ -172,7 +262,7 @@ export component AppWindow inherits Window {
                                 border-radius: 4px;
                                 background: #48e191;
                             }
-                            Text { text: "Synthetic scene ready"; color: #9cdbb9; font-size: 11px; }
+                            Text { text: root.status-title; color: #9cdbb9; font-size: 11px; }
                         }
                     }
                 }
@@ -191,45 +281,57 @@ export component AppWindow inherits Window {
                         height: root.scene-height * root.zoom * 1px;
                         background: #101318;
 
-                        for segment in root.graph-segments: Rectangle {
-                            x: segment.x * root.zoom * 1px;
-                            y: segment.y * root.zoom * 1px;
-                            width: max(1px, segment.width * root.zoom * 1px);
-                            height: max(1px, segment.height * root.zoom * 1px);
-                            background: segment.color;
-                            opacity: 0.70 + root.pulse * 0.20;
+                        Image {
+                            width: root.scene-width * root.zoom * 1px;
+                            height: root.scene-height * root.zoom * 1px;
+                            source: root.graph-image;
+                            image-fit: fill;
+                            opacity: root.benchmark-active ? 0.995 + root.pulse * 0.005 : 1;
                         }
 
-                        for module in root.graph-modules: Rectangle {
-                            x: module.x * root.zoom * 1px;
-                            y: module.y * root.zoom * 1px;
-                            width: module.width * root.zoom * 1px;
-                            height: module.height * root.zoom * 1px;
-                            background: module.fill;
-                            border-color: module.border;
-                            border-width: 1px;
-                            border-radius: 5px;
+                        if root.zoom > 0.42: Rectangle {
+                            width: root.scene-width * root.zoom * 1px;
+                            height: root.scene-height * root.zoom * 1px;
+                            background: transparent;
+
+                            for label in root.graph-labels: Text {
+                                x: label.x * root.zoom * 1px;
+                                y: label.y * root.zoom * 1px;
+                                text: label.text;
+                                color: #dbe5ef;
+                                font-family: "Microsoft YaHei UI";
+                                font-size: max(9px, 13px * root.zoom);
+                                font-weight: 600;
+                            }
                         }
 
-                        for node in root.graph-nodes: Rectangle {
-                            x: node.x * root.zoom * 1px;
-                            y: node.y * root.zoom * 1px;
-                            width: node.width * root.zoom * 1px;
-                            height: node.height * root.zoom * 1px;
-                            background: node.fill;
-                            border-color: node.border;
-                            border-width: 1px;
+                        TouchArea {
+                            width: root.scene-width * root.zoom * 1px;
+                            height: root.scene-height * root.zoom * 1px;
+                            clicked => {
+                                root.canvas-clicked(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                            }
+                            moved => {
+                                root.canvas-moved(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                            }
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down {
+                                    root.canvas-pressed(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                                } else if event.kind == PointerEventKind.up {
+                                    root.canvas-released(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                                }
+                            }
+                        }
+
+                        if root.selection-available: Rectangle {
+                            x: root.selected-x * root.zoom * 1px;
+                            y: root.selected-y * root.zoom * 1px;
+                            width: root.selected-width * root.zoom * 1px;
+                            height: root.selected-height * root.zoom * 1px;
+                            background: transparent;
+                            border-color: #f4f7fb;
+                            border-width: 2px;
                             border-radius: 3px;
-                        }
-
-                        for label in root.graph-labels: Text {
-                            x: label.x * root.zoom * 1px;
-                            y: label.y * root.zoom * 1px;
-                            text: label.text;
-                            color: #dbe5ef;
-                            font-family: "Microsoft YaHei UI";
-                            font-size: max(9px, 13px * root.zoom);
-                            font-weight: 600;
                         }
                     }
                 }

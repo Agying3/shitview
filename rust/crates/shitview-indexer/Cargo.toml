@@ -1,0 +1,15 @@
+[package]
+name = "shitview-indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+crossbeam-channel.workspace = true
+ignore.workspace = true
+notify.workspace = true
+shitview-core = { path = "../shitview-core" }
+shitview-storage = { path = "../shitview-storage" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
