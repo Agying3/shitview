@@ -1,0 +1,8 @@
+[package]
+name = "shitview-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+shitview-core = { path = "../shitview-core" }

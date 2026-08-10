@@ -1,0 +1,18 @@
+[workspace]
+members = [
+  "apps/shitview-slint",
+  "crates/shitview-core",
+  "crates/shitview-index",
+  "crates/shitview-storage",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+slint = "1"
+slint-build = "1"

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "PEEP-HOLE-PRO"
+name = "shitview"
 version = "0.1.0"
 description = "Dynamic project peep-hole map for filesystem visualization"
 readme = "README.md"
@@ -19,11 +19,12 @@ dev = [
 ]
 
 [project.scripts]
-peep-hole-pro = "peep_hole_pro.main:main"
+shitview = "shitview.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
 
