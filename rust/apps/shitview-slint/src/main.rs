@@ -51,6 +51,7 @@ struct TopologyNode<'a> {
     children: Vec<usize>,
     x: f32,
     y: f32,
+    pinned: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1175,7 +1176,6 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
     const NODE_WIDTH: f32 = 126.0;
     const NODE_HEIGHT: f32 = 36.0;
     const OUTER_MARGIN: f32 = 120.0;
-    const ROW_GAP: f32 = 4.0;
 
     let started = Instant::now();
     let mut sources = indexed_nodes.iter().collect::<Vec<_>>();
@@ -1208,6 +1208,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             children: Vec::new(),
             x: OUTER_MARGIN,
             y: OUTER_MARGIN,
+            pinned: false,
         })
         .collect::<Vec<_>>();
     for child in 0..topology.len() {
@@ -1216,16 +1217,6 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         }
     }
 
-    let root = topology
-        .iter()
-        .enumerate()
-        .min_by(|(_, left), (_, right)| {
-            left.source
-                .depth
-                .cmp(&right.source.depth)
-                .then_with(|| left.source.display_path.cmp(&right.source.display_path))
-        })
-        .map(|(index, _)| index);
     let maximum_depth = topology
         .iter()
         .map(|item| item.source.depth)
@@ -1236,6 +1227,29 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         depth_counts[item.source.depth] += 1;
     }
     let dense = topology.len() > TREE_LAYOUT_LIMIT;
+    let all_group_candidates = if dense {
+        Vec::new()
+    } else {
+        topology
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (item.source.kind == NodeKind::Directory
+                    && item.source.depth > 0
+                    && item.children.len() >= 2)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>()
+    };
+    let group_candidates = all_group_candidates
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            !all_group_candidates
+                .iter()
+                .any(|other| other != candidate && is_descendant(*other, *candidate, &topology))
+        })
+        .collect::<Vec<_>>();
     let mut x_by_depth = vec![OUTER_MARGIN; maximum_depth + 1];
     if dense {
         const DENSE_ROWS: usize = 46;
@@ -1257,28 +1271,13 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             }
         }
     } else {
-        let mut edge_counts = vec![0usize; maximum_depth + 1];
-        for item in &topology {
-            if item.parent.is_some() && item.source.depth < maximum_depth {
-                edge_counts[item.source.depth] += 1;
-            }
-        }
-        for depth in 1..=maximum_depth {
-            let route_gap = (edge_counts[depth - 1] as f32 * 2.0 + 48.0).max(90.0);
-            x_by_depth[depth] = x_by_depth[depth - 1] + NODE_WIDTH + route_gap;
-        }
-        let mut cursor = OUTER_MARGIN;
-        if let Some(root) = root {
-            layout_tree(root, &mut topology, &mut cursor, NODE_HEIGHT + ROW_GAP);
-        }
-        for index in 0..topology.len() {
-            if topology[index].parent.is_none() && Some(index) != root {
-                layout_tree(index, &mut topology, &mut cursor, NODE_HEIGHT + ROW_GAP);
-            }
-        }
-        for item in &mut topology {
-            item.x = x_by_depth[item.source.depth];
-        }
+        layout_compact_islands(
+            &mut topology,
+            &group_candidates,
+            NODE_WIDTH,
+            NODE_HEIGHT,
+            OUTER_MARGIN,
+        );
     }
 
     let mut nodes = Vec::with_capacity(topology.len());
@@ -1294,29 +1293,19 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         (0xd0, 0x78, 0x9b),
     ];
 
-    // Dense overviews show the actual child blocks directly. A frame around a
-    // whole top-level branch turns the overview into one large empty container.
-    let group_candidates = if dense {
-        Vec::new()
-    } else {
-        topology
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                (item.source.kind == NodeKind::Directory
-                    && item.source.depth > 0
-                    && item.children.len() >= 2)
-                    .then_some(index)
-            })
-            .collect::<Vec<_>>()
-    };
-    for candidate in &group_candidates {
-        let has_candidate_descendant = group_candidates
-            .iter()
-            .any(|other| other != candidate && is_descendant(*other, *candidate, &topology));
-        if has_candidate_descendant {
-            continue;
+    // Apply portable user positions before frame bounds are calculated so a
+    // moved component can never escape its owning glass frame.
+    for item in &mut topology {
+        if let Some(entry) = layout.and_then(|layout| {
+            layout.entry_for(item.source.stable_id.as_deref(), &item.source.display_path)
+        }) {
+            item.x = entry.x.max(60.0);
+            item.y = entry.y.max(60.0);
+            item.pinned = entry.pinned;
         }
+    }
+
+    for candidate in &group_candidates {
         let descendants = collect_descendants(*candidate, &topology);
         let min_x = descendants
             .iter()
@@ -1365,13 +1354,9 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
     let show_all_labels = topology.len() <= 5_000;
     for (index, item) in topology.iter_mut().enumerate() {
         let source = item.source;
-        let saved = layout
-            .and_then(|layout| layout.entry_for(source.stable_id.as_deref(), &source.display_path));
-        let (x, y, pinned) = saved
-            .map(|entry| (entry.x.max(60.0), entry.y.max(60.0), entry.pinned))
-            .unwrap_or((item.x, item.y, false));
-        item.x = x;
-        item.y = y;
+        let x = item.x;
+        let y = item.y;
+        let pinned = item.pinned;
         let (red, green, blue) = palette[(source.depth + index) % palette.len()];
         let is_directory = source.kind == NodeKind::Directory;
         let width = if is_directory {
@@ -1524,17 +1509,136 @@ fn parent_display_path(path: &str) -> Option<String> {
         .map(|(parent, _)| parent.to_owned())
 }
 
-fn layout_tree(index: usize, topology: &mut [TopologyNode<'_>], cursor: &mut f32, row_step: f32) {
-    let children = topology[index].children.clone();
-    if children.is_empty() {
-        topology[index].y = *cursor;
-        *cursor += row_step;
-        return;
+fn layout_compact_islands(
+    topology: &mut [TopologyNode<'_>],
+    group_roots: &[usize],
+    node_width: f32,
+    node_height: f32,
+    margin: f32,
+) {
+    const COLUMN_STEP: f32 = 144.0;
+    const ROW_STEP: f32 = 48.0;
+    const DEPTH_GAP: f32 = 52.0;
+    const ISLAND_ROWS: usize = 8;
+    const LOOSE_ROWS: usize = 16;
+    const ISLAND_GAP: f32 = 44.0;
+
+    struct Island {
+        positions: Vec<(usize, f32, f32)>,
+        width: f32,
+        height: f32,
     }
-    for child in &children {
-        layout_tree(*child, topology, cursor, row_step);
+
+    let mut membership = vec![None; topology.len()];
+    let mut islands = Vec::with_capacity(group_roots.len());
+    for (group_index, group_root) in group_roots.iter().copied().enumerate() {
+        let members = collect_descendants(group_root, topology);
+        for member in &members {
+            membership[*member] = Some(group_index);
+        }
+        let base_depth = topology[group_root].source.depth;
+        let max_relative_depth = members
+            .iter()
+            .map(|index| topology[*index].source.depth.saturating_sub(base_depth))
+            .max()
+            .unwrap_or(0);
+        let mut depth_counts = vec![0usize; max_relative_depth + 1];
+        for member in &members {
+            depth_counts[topology[*member].source.depth.saturating_sub(base_depth)] += 1;
+        }
+        let mut depth_offsets = vec![0.0_f32; max_relative_depth + 1];
+        for depth in 1..=max_relative_depth {
+            let previous_columns = depth_counts[depth - 1].div_ceil(ISLAND_ROWS).max(1);
+            depth_offsets[depth] =
+                depth_offsets[depth - 1] + previous_columns as f32 * COLUMN_STEP + DEPTH_GAP;
+        }
+        let max_rows = depth_counts
+            .iter()
+            .map(|count| (*count).min(ISLAND_ROWS))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let content_height = max_rows as f32 * ROW_STEP;
+        let mut sequences = vec![0usize; max_relative_depth + 1];
+        let mut positions = Vec::with_capacity(members.len());
+        let mut max_x = 0.0_f32;
+        for member in members {
+            let relative_depth = topology[member].source.depth.saturating_sub(base_depth);
+            let sequence = sequences[relative_depth];
+            sequences[relative_depth] += 1;
+            let column = sequence / ISLAND_ROWS;
+            let row = sequence % ISLAND_ROWS;
+            let local_x = 42.0 + depth_offsets[relative_depth] + column as f32 * COLUMN_STEP;
+            let local_y = if member == group_root {
+                58.0 + (content_height - node_height) * 0.5
+            } else {
+                58.0 + row as f32 * ROW_STEP
+            };
+            max_x = max_x.max(local_x);
+            positions.push((member, local_x, local_y));
+        }
+        islands.push(Island {
+            positions,
+            width: max_x + node_width + 48.0,
+            height: content_height + 116.0,
+        });
     }
-    topology[index].y = (topology[children[0]].y + topology[*children.last().unwrap()].y) * 0.5;
+
+    let loose = membership
+        .iter()
+        .enumerate()
+        .filter_map(|(index, group)| group.is_none().then_some(index))
+        .collect::<Vec<_>>();
+    let max_loose_depth = loose
+        .iter()
+        .map(|index| topology[*index].source.depth)
+        .max()
+        .unwrap_or(0);
+    let mut loose_counts = vec![0usize; max_loose_depth + 1];
+    for index in &loose {
+        loose_counts[topology[*index].source.depth] += 1;
+    }
+    let mut loose_offsets = vec![0.0_f32; max_loose_depth + 1];
+    for depth in 1..=max_loose_depth {
+        let previous_columns = loose_counts[depth - 1].div_ceil(LOOSE_ROWS).max(1);
+        loose_offsets[depth] =
+            loose_offsets[depth - 1] + previous_columns as f32 * COLUMN_STEP + DEPTH_GAP;
+    }
+    let mut loose_sequences = vec![0usize; max_loose_depth + 1];
+    let mut loose_max_x = margin;
+    for index in loose {
+        let depth = topology[index].source.depth;
+        let sequence = loose_sequences[depth];
+        loose_sequences[depth] += 1;
+        let column = sequence / LOOSE_ROWS;
+        let row = sequence % LOOSE_ROWS;
+        topology[index].x = margin + loose_offsets[depth] + column as f32 * COLUMN_STEP;
+        topology[index].y = margin + row as f32 * ROW_STEP;
+        loose_max_x = loose_max_x.max(topology[index].x + node_width);
+    }
+
+    let total_area = islands
+        .iter()
+        .map(|island| island.width * island.height)
+        .sum::<f32>();
+    let target_width = (total_area * 1.45).sqrt().clamp(900.0, 1_900.0);
+    let start_x = loose_max_x + 86.0;
+    let mut cursor_x = start_x;
+    let mut cursor_y = margin;
+    let mut row_height = 0.0_f32;
+    for island in islands {
+        if cursor_x > start_x && cursor_x + island.width > start_x + target_width {
+            cursor_x = start_x;
+            cursor_y += row_height + ISLAND_GAP;
+            row_height = 0.0;
+        }
+        for (index, local_x, local_y) in island.positions {
+            topology[index].x = cursor_x + local_x;
+            topology[index].y = cursor_y + local_y;
+        }
+        cursor_x += island.width + ISLAND_GAP;
+        row_height = row_height.max(island.height);
+    }
 }
 
 fn is_descendant(index: usize, ancestor: usize, topology: &[TopologyNode<'_>]) -> bool {
@@ -1884,6 +1988,39 @@ mod tests {
             .labels
             .iter()
             .any(|label| label.text.as_str() == "services / 3"));
+        for left in 0..scene.hit_targets.len() {
+            for right in left + 1..scene.hit_targets.len() {
+                let a = &scene.hit_targets[left];
+                let b = &scene.hit_targets[right];
+                assert!(
+                    a.x + a.width <= b.x
+                        || b.x + b.width <= a.x
+                        || a.y + a.height <= b.y
+                        || b.y + b.height <= a.y,
+                    "nodes overlap: {} and {}",
+                    a.path,
+                    b.path
+                );
+            }
+        }
+        let frames = scene
+            .modules
+            .chunks_exact(6)
+            .map(|parts| &parts[0])
+            .collect::<Vec<_>>();
+        for left in 0..frames.len() {
+            for right in left + 1..frames.len() {
+                let a = frames[left];
+                let b = frames[right];
+                assert!(
+                    a.x + a.width <= b.x
+                        || b.x + b.width <= a.x
+                        || a.y + a.height <= b.y
+                        || b.y + b.height <= a.y,
+                    "glass frames overlap"
+                );
+            }
+        }
     }
 
     #[test]

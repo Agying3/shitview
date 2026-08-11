@@ -191,11 +191,11 @@ export component AppWindow inherits Window {
                     if !root.canvas-interacting || !root.canvas-pan-enabled: Rectangle {
                         cache-rendering-hint: true;
                         for label in root.graph-labels: Rectangle {
-                            visible: root.zoom > 0.34 || label.always-visible;
+                            visible: root.zoom >= 0.30 || label.always-visible;
                             x: (label.x - root.pan-x) * root.zoom * 1px;
                             y: (label.y - root.pan-y) * root.zoom * 1px;
                             width: label.width * root.zoom * 1px;
-                            height: 28px;
+                            height: max(9px, 24px * root.zoom);
                             Text {
                                 width: parent.width;
                                 height: parent.height;
@@ -204,6 +204,7 @@ export component AppWindow inherits Window {
                                 font-family: "Microsoft YaHei UI";
                                 font-size: max(9px, 13px * root.zoom);
                                 font-weight: 600;
+                                vertical-alignment: center;
                                 overflow: elide;
                             }
                         }
