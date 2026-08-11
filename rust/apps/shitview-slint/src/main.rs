@@ -71,12 +71,18 @@ struct HitTarget {
 
 #[derive(Debug, Clone)]
 struct DragState {
+    root: DraggedTarget,
+    targets: Vec<DraggedTarget>,
+    start_pointer_x: f32,
+    start_pointer_y: f32,
+}
+
+#[derive(Debug, Clone)]
+struct DraggedTarget {
     path: String,
     stable_id: Option<Vec<u8>>,
     origin_x: f32,
     origin_y: f32,
-    start_pointer_x: f32,
-    start_pointer_y: f32,
 }
 
 #[derive(Debug, Default)]
@@ -128,6 +134,20 @@ impl SpatialIndex {
 
     fn find_path(&self, path: &str) -> Option<&HitTarget> {
         self.targets.iter().find(|target| target.path == path)
+    }
+
+    fn subtree(&self, root: &HitTarget) -> Vec<DraggedTarget> {
+        let prefix = format!("{}/", root.path.trim_end_matches('/'));
+        self.targets
+            .iter()
+            .filter(|target| target.path == root.path || target.path.starts_with(&prefix))
+            .map(|target| DraggedTarget {
+                path: target.path.clone(),
+                stable_id: target.stable_id.clone(),
+                origin_x: target.x,
+                origin_y: target.y,
+            })
+            .collect()
     }
 }
 
@@ -266,16 +286,27 @@ fn main() -> Result<(), slint::PlatformError> {
     let selected = Rc::clone(&selected_target);
     let drag = Rc::clone(&drag_state);
     ui.on_canvas_pressed(move |x, y| {
-        let hit = interaction
+        let (hit, targets) = interaction
             .lock()
             .ok()
-            .and_then(|index| index.hit(x, y).cloned());
+            .map(|index| {
+                let hit = index.hit(x, y).cloned();
+                let targets = hit
+                    .as_ref()
+                    .map(|target| index.subtree(target))
+                    .unwrap_or_default();
+                (hit, targets)
+            })
+            .unwrap_or_default();
         *selected.borrow_mut() = hit.clone();
         *drag.borrow_mut() = hit.as_ref().map(|target| DragState {
-            path: target.path.clone(),
-            stable_id: target.stable_id.clone(),
-            origin_x: target.x,
-            origin_y: target.y,
+            root: DraggedTarget {
+                path: target.path.clone(),
+                stable_id: target.stable_id.clone(),
+                origin_x: target.x,
+                origin_y: target.y,
+            },
+            targets,
             start_pointer_x: x,
             start_pointer_y: y,
         });
@@ -294,8 +325,8 @@ fn main() -> Result<(), slint::PlatformError> {
         };
         if let Some(ui) = weak.upgrade() {
             if let Some(target) = selected.borrow_mut().as_mut() {
-                target.x = state.origin_x + x - state.start_pointer_x;
-                target.y = state.origin_y + y - state.start_pointer_y;
+                target.x = state.root.origin_x + x - state.start_pointer_x;
+                target.y = state.root.origin_y + y - state.start_pointer_y;
                 ui.set_selected_x(target.x);
                 ui.set_selected_y(target.y);
             }
@@ -312,22 +343,26 @@ fn main() -> Result<(), slint::PlatformError> {
         let Some(state) = drag.borrow_mut().take() else {
             return;
         };
-        let new_x = (state.origin_x + x - state.start_pointer_x).max(60.0);
-        let new_y = (state.origin_y + y - state.start_pointer_y).max(60.0);
+        let delta_x = x - state.start_pointer_x;
+        let delta_y = y - state.start_pointer_y;
+        let new_x = (state.root.origin_x + delta_x).max(60.0);
+        let new_y = (state.root.origin_y + delta_y).max(60.0);
         let Some(ui) = weak.upgrade() else {
             return;
         };
         ui.set_canvas_pan_enabled(true);
         if let Ok(mut layout) = layout_store_for_drag.lock() {
-            layout.set(
-                state.stable_id.as_deref(),
-                &state.path,
-                LayoutEntry {
-                    x: new_x,
-                    y: new_y,
-                    pinned: true,
-                },
-            );
+            for target in &state.targets {
+                layout.set(
+                    target.stable_id.as_deref(),
+                    &target.path,
+                    LayoutEntry {
+                        x: (target.origin_x + delta_x).max(60.0),
+                        y: (target.origin_y + delta_y).max(60.0),
+                        pinned: true,
+                    },
+                );
+            }
             if let Err(error) = layout.save() {
                 ui.set_status_detail(SharedString::from(format!("Cannot save layout: {error}")));
             }
@@ -346,7 +381,15 @@ fn main() -> Result<(), slint::PlatformError> {
             .ok()
             .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout)) = (nodes, layout) {
-            rebuild_project_scene(&ui, nodes, layout, &interaction_for_drag, Some(state.path));
+            if !nodes.is_empty() {
+                rebuild_project_scene(
+                    &ui,
+                    nodes,
+                    layout,
+                    &interaction_for_drag,
+                    Some(state.root.path),
+                );
+            }
         }
     });
 
@@ -1292,41 +1335,52 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         });
     }
 
-    let mut routes = topology
-        .iter()
-        .enumerate()
-        .filter_map(|(child, item)| item.parent.map(|parent| (parent, child)))
-        .filter(|(_, child)| {
-            !dense
-                || topology[*child].source.kind == NodeKind::Directory
-                || topology[*child].source.depth <= 1
-        })
-        .collect::<Vec<_>>();
-    if dense {
-        routes.truncate(220);
+    let mut routes = HashMap::<usize, Vec<usize>>::new();
+    for (child, item) in topology.iter().enumerate() {
+        let Some(parent) = item.parent else {
+            continue;
+        };
+        if dense && item.source.kind != NodeKind::Directory && item.source.depth > 1 {
+            continue;
+        }
+        routes.entry(parent).or_default().push(child);
     }
-    routes.sort_unstable_by(|(left_parent, left_child), (right_parent, right_child)| {
-        topology[*left_parent]
+    for children in routes.values_mut() {
+        children.sort_unstable_by(|left, right| topology[*left].y.total_cmp(&topology[*right].y));
+        if !dense && children.len() > 16 {
+            children.truncate(16);
+        }
+    }
+    let mut route_parents = routes.keys().copied().collect::<Vec<_>>();
+    route_parents.sort_unstable_by(|left, right| {
+        topology[*left]
             .source
             .depth
-            .cmp(&topology[*right_parent].source.depth)
-            .then_with(|| topology[*left_child].y.total_cmp(&topology[*right_child].y))
+            .cmp(&topology[*right].source.depth)
+            .then_with(|| topology[*left].y.total_cmp(&topology[*right].y))
     });
     let mut route_positions = vec![0usize; maximum_depth + 1];
-    for (parent, child) in routes {
+    for parent in route_parents {
         let depth = topology[parent].source.depth;
         let source = &topology[parent];
-        let target = &topology[child];
-        if target.x <= source.x + NODE_WIDTH + 12.0 {
+        let children = &routes[&parent];
+        let first_target = &topology[children[0]];
+        if first_target.x <= source.x + NODE_WIDTH + 12.0 {
             continue;
         }
         let route_x = source.x + NODE_WIDTH + 28.0 + route_positions[depth] as f32 * 3.5;
         route_positions[depth] += 1;
-        if route_x >= target.x - 6.0 {
+        if route_x >= first_target.x - 6.0 {
             continue;
         }
         let source_y = source.y + NODE_HEIGHT * 0.5;
-        let target_y = target.y + NODE_HEIGHT * 0.5;
+        let mut min_y = source_y;
+        let mut max_y = source_y;
+        for child in children {
+            let target_y = topology[*child].y + NODE_HEIGHT * 0.5;
+            min_y = min_y.min(target_y);
+            max_y = max_y.max(target_y);
+        }
         let trace = Color::from_argb_u8(190, 0x55, 0xdf, 0x91);
         segments.push(SceneSegment {
             x: source.x + NODE_WIDTH,
@@ -1337,18 +1391,21 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         });
         segments.push(SceneSegment {
             x: route_x,
-            y: source_y.min(target_y),
+            y: min_y,
             width: 1.5,
-            height: (source_y - target_y).abs().max(1.5),
+            height: (max_y - min_y).max(1.5),
             color: trace,
         });
-        segments.push(SceneSegment {
-            x: route_x,
-            y: target_y,
-            width: target.x - route_x,
-            height: 1.5,
-            color: trace,
-        });
+        for child in children {
+            let target = &topology[*child];
+            segments.push(SceneSegment {
+                x: route_x,
+                y: target.y + NODE_HEIGHT * 0.5,
+                width: target.x - route_x,
+                height: 1.5,
+                color: trace,
+            });
+        }
     }
 
     let mut scene = SyntheticScene {
@@ -1631,6 +1688,20 @@ mod tests {
             .expect("target should be found in its grid cell");
         assert_eq!(hit.path, expected.path);
         assert!(index.hit(-10.0, -10.0).is_none());
+    }
+
+    #[test]
+    fn spatial_index_collects_a_dragged_directory_subtree() {
+        let scene = build_scene(37);
+        let index = SpatialIndex::new(scene.hit_targets);
+        let module = index
+            .find_path("synthetic:/project/module-00")
+            .expect("synthetic module should be indexed");
+        let subtree = index.subtree(module);
+        assert_eq!(subtree.len(), 3);
+        assert!(subtree
+            .iter()
+            .all(|target| target.path.starts_with("synthetic:/project/module-00")));
     }
 
     #[test]
