@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 
 export struct SceneRect {
     x: float,
@@ -61,6 +61,10 @@ export component AppWindow inherits Window {
     in property <float> selected-width: 0;
     in property <float> selected-height: 0;
     in-out property <float> zoom: 0.72;
+    in-out property <float> pan-x: 0;
+    in-out property <float> pan-y: 0;
+    in-out property <float> pan-start-x: 0;
+    in-out property <float> pan-start-y: 0;
     in-out property <bool> canvas-pan-enabled: true;
     in-out property <bool> canvas-interacting: false;
 
@@ -259,84 +263,122 @@ export component AppWindow inherits Window {
                 background: #0d1915;
                 clip: true;
 
-                ScrollView {
-                    mouse-drag-pan-enabled: root.canvas-pan-enabled;
-                    viewport-width: root.scene-width * root.zoom * 1px;
-                    viewport-height: root.scene-height * root.zoom * 1px;
+                canvas := Rectangle {
+                    background: #0d1915;
+                    clip: true;
 
-                    Rectangle {
-                        width: root.scene-width * root.zoom * 1px;
-                        height: root.scene-height * root.zoom * 1px;
-                        background: #0d1915;
+                    Image {
+                        width: canvas.width;
+                        height: canvas.height;
+                        source: root.graph-image;
+                        source-clip-x: round(root.pan-x / max(1, root.scene-width) * self.source.width);
+                        source-clip-y: round(root.pan-y / max(1, root.scene-height) * self.source.height);
+                        source-clip-width: min(
+                            self.source.width - self.source-clip-x,
+                            max(1, round(794 / root.zoom / max(1, root.scene-width) * self.source.width))
+                        );
+                        source-clip-height: min(
+                            self.source.height - self.source-clip-y,
+                            max(1, round(738 / root.zoom / max(1, root.scene-height) * self.source.height))
+                        );
+                        image-fit: fill;
+                        cache-rendering-hint: true;
+                    }
 
-                        Image {
-                            width: root.scene-width * root.zoom * 1px;
-                            height: root.scene-height * root.zoom * 1px;
-                            source: root.graph-image;
-                            image-fit: fill;
-                            cache-rendering-hint: true;
+                    if root.zoom > 0.42 && !root.canvas-interacting: Rectangle {
+                        for label in root.graph-labels: Text {
+                            x: (label.x - root.pan-x) * root.zoom * 1px;
+                            y: (label.y - root.pan-y) * root.zoom * 1px;
+                            text: label.text;
+                            color: #dbe5ef;
+                            font-family: "Microsoft YaHei UI";
+                            font-size: max(9px, 13px * root.zoom);
+                            font-weight: 600;
                         }
+                    }
 
-                        if root.zoom > 0.42 && !root.canvas-interacting: Rectangle {
-                            width: root.scene-width * root.zoom * 1px;
-                            height: root.scene-height * root.zoom * 1px;
-                            background: transparent;
-
-                            for label in root.graph-labels: Text {
-                                x: label.x * root.zoom * 1px;
-                                y: label.y * root.zoom * 1px;
-                                text: label.text;
-                                color: #dbe5ef;
-                                font-family: "Microsoft YaHei UI";
-                                font-size: max(9px, 13px * root.zoom);
-                                font-weight: 600;
-                            }
+                    TouchArea {
+                        clicked => {
+                            root.canvas-clicked(
+                                root.pan-x + self.mouse-x / 1px / root.zoom,
+                                root.pan-y + self.mouse-y / 1px / root.zoom
+                            );
                         }
-
-                        TouchArea {
-                            width: root.scene-width * root.zoom * 1px;
-                            height: root.scene-height * root.zoom * 1px;
-                            clicked => {
-                                root.canvas-clicked(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
-                            }
-                            moved => {
-                                if !root.canvas-pan-enabled {
-                                    root.canvas-moved(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
-                                }
-                            }
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down {
-                                    root.canvas-interacting = true;
-                                    root.canvas-pressed(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
-                                } else if event.kind == PointerEventKind.up {
-                                    root.canvas-interacting = false;
-                                    root.canvas-released(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
-                                } else if event.kind == PointerEventKind.cancel {
-                                    root.canvas-interacting = false;
-                                    root.canvas-pan-enabled = true;
-                                }
-                            }
-                            scroll-event(event) => {
-                                if event.delta-y > 0 {
-                                    root.zoom = min(1.60, root.zoom + 0.08);
-                                    return accept;
-                                } else if event.delta-y < 0 {
-                                    root.zoom = max(0.28, root.zoom - 0.08);
-                                    return accept;
-                                }
-                                reject
+                        moved => {
+                            if root.canvas-pan-enabled {
+                                root.pan-x = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-width - canvas.width / 1px / root.zoom),
+                                        root.pan-start-x - (self.mouse-x - self.pressed-x) / 1px / root.zoom
+                                    )
+                                );
+                                root.pan-y = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-height - canvas.height / 1px / root.zoom),
+                                        root.pan-start-y - (self.mouse-y - self.pressed-y) / 1px / root.zoom
+                                    )
+                                );
+                            } else {
+                                root.canvas-moved(
+                                    root.pan-x + self.mouse-x / 1px / root.zoom,
+                                    root.pan-y + self.mouse-y / 1px / root.zoom
+                                );
                             }
                         }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down {
+                                root.pan-start-x = root.pan-x;
+                                root.pan-start-y = root.pan-y;
+                                root.canvas-interacting = true;
+                                root.canvas-pressed(
+                                    root.pan-x + self.mouse-x / 1px / root.zoom,
+                                    root.pan-y + self.mouse-y / 1px / root.zoom
+                                );
+                            } else if event.kind == PointerEventKind.up {
+                                root.canvas-interacting = false;
+                                root.canvas-released(
+                                    root.pan-x + self.mouse-x / 1px / root.zoom,
+                                    root.pan-y + self.mouse-y / 1px / root.zoom
+                                );
+                            } else if event.kind == PointerEventKind.cancel {
+                                root.canvas-interacting = false;
+                                root.canvas-pan-enabled = true;
+                            }
+                        }
+                        scroll-event(event) => {
+                            if event.delta-y > 0 {
+                                root.zoom = min(1.60, root.zoom + 0.08);
+                                return accept;
+                            } else if event.delta-y < 0 {
+                                root.zoom = max(0.28, root.zoom - 0.08);
+                                return accept;
+                            }
+                            reject
+                        }
+                    }
 
-                        if root.selection-available: Rectangle {
-                            x: root.selected-x * root.zoom * 1px;
-                            y: root.selected-y * root.zoom * 1px;
-                            width: root.selected-width * root.zoom * 1px;
-                            height: root.selected-height * root.zoom * 1px;
-                            background: transparent;
-                            border-color: #f0c96b;
-                            border-width: 2px;
-                            border-radius: 3px;
+                    if root.selection-available: Rectangle {
+                        x: (root.selected-x - root.pan-x) * root.zoom * 1px;
+                        y: (root.selected-y - root.pan-y) * root.zoom * 1px;
+                        width: root.selected-width * root.zoom * 1px;
+                        height: root.selected-height * root.zoom * 1px;
+                        background: root.canvas-interacting && !root.canvas-pan-enabled ? #19372d : transparent;
+                        border-color: root.canvas-interacting && !root.canvas-pan-enabled ? #63e3a0 : #f0c96b;
+                        border-width: 2px;
+                        border-radius: 3px;
+
+                        if root.canvas-interacting && !root.canvas-pan-enabled: Text {
+                            x: 7px;
+                            width: parent.width - 12px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            text: root.selected-name;
+                            color: #e8fff2;
+                            font-family: "Microsoft YaHei UI";
+                            font-size: max(9px, 12px * root.zoom);
+                            overflow: elide;
                         }
                     }
                 }

@@ -642,26 +642,91 @@ fn rasterize_scene(scene: &SyntheticScene) -> SharedPixelBuffer<Rgba8Pixel> {
         );
     }
     for node in &scene.nodes {
-        draw_rect(
+        draw_rounded_component(
             &mut pixels,
             node.x,
             node.y,
             node.width,
             node.height,
             node.fill,
-            scale,
-        );
-        draw_border(
-            &mut pixels,
-            node.x,
-            node.y,
-            node.width,
-            node.height,
             node.border,
             scale,
         );
     }
     pixels
+}
+
+fn draw_rounded_component(
+    pixels: &mut SharedPixelBuffer<Rgba8Pixel>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    fill: Color,
+    border: Color,
+    scale: f32,
+) {
+    let radius = 4.0;
+    let thickness = (scale * 1.5).ceil().max(1.0) / scale;
+    draw_rounded_rect(pixels, x, y, width, height, radius, border, scale);
+    draw_rounded_rect(
+        pixels,
+        x + thickness,
+        y + thickness,
+        (width - thickness * 2.0).max(1.0),
+        (height - thickness * 2.0).max(1.0),
+        (radius - thickness).max(1.0),
+        fill,
+        scale,
+    );
+}
+
+fn draw_rounded_rect(
+    pixels: &mut SharedPixelBuffer<Rgba8Pixel>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    radius: f32,
+    color: Color,
+    scale: f32,
+) {
+    if color.alpha() == 0 {
+        return;
+    }
+    let radius = radius.min(width * 0.5).min(height * 0.5).max(0.0);
+    let x0 = (x * scale).floor().max(0.0) as u32;
+    let y0 = (y * scale).floor().max(0.0) as u32;
+    let x1 = ((x + width) * scale).ceil().max(0.0) as u32;
+    let y1 = ((y + height) * scale).ceil().max(0.0) as u32;
+    let width_limit = pixels.width();
+    let x1 = x1.min(width_limit);
+    let y1 = y1.min(pixels.height());
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let source = Rgba8Pixel {
+        r: color.red(),
+        g: color.green(),
+        b: color.blue(),
+        a: color.alpha(),
+    };
+    let row_width = width_limit as usize;
+    let data = pixels.make_mut_slice();
+    for row in y0..y1 {
+        let point_y = (row as f32 + 0.5) / scale;
+        let nearest_y = point_y.clamp(y + radius, y + height - radius);
+        for column in x0..x1 {
+            let point_x = (column as f32 + 0.5) / scale;
+            let nearest_x = point_x.clamp(x + radius, x + width - radius);
+            let delta_x = point_x - nearest_x;
+            let delta_y = point_y - nearest_y;
+            if delta_x * delta_x + delta_y * delta_y <= radius * radius {
+                let index = row as usize * row_width + column as usize;
+                data[index] = blend(data[index], source);
+            }
+        }
+    }
 }
 
 fn raster_dimensions(scene: &SyntheticScene) -> (f32, u32, u32) {
