@@ -269,6 +269,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 }
                 if let Some(ui) = weak.upgrade() {
+                    ui.set_view_initialized(false);
                     apply_prepared_scene(&ui, prepared, "", &interaction);
                     ui.set_status_title(SharedString::from("Synthetic scene ready"));
                 }
@@ -486,6 +487,7 @@ fn main() -> Result<(), slint::PlatformError> {
             .ok()
             .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout), Some(ui)) = (nodes, layout, weak.upgrade()) {
+            ui.set_view_initialized(false);
             let selected_path = selected.borrow().as_ref().map(|target| target.path.clone());
             rebuild_project_scene(&ui, nodes, layout, &interaction_for_reset, selected_path);
         }
@@ -511,7 +513,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let weak = ui.as_weak();
     ui.on_zoom_out(move || {
         if let Some(ui) = weak.upgrade() {
-            ui.set_zoom((ui.get_zoom() - 0.10).max(0.28));
+            ui.set_zoom((ui.get_zoom() - 0.10).max(0.15));
         }
     });
 
@@ -588,6 +590,16 @@ fn apply_prepared_scene(
     ui.set_selected_children(SharedString::default());
     ui.set_scene_width(scene.width);
     ui.set_scene_height(scene.height);
+    if !ui.get_view_initialized() {
+        let fit_zoom = (1034.0 / scene.width.max(1.0))
+            .min(746.0 / scene.height.max(1.0))
+            .mul_add(0.92, 0.0)
+            .clamp(0.28, 1.1);
+        ui.set_zoom(fit_zoom);
+        ui.set_pan_x(0.0);
+        ui.set_pan_y(0.0);
+        ui.set_view_initialized(true);
+    }
     ui.set_graph_image(Image::from_rgba8(scene.pixels));
     ui.set_graph_labels(ModelRc::from(Rc::new(VecModel::from(scene.labels))));
     ui.set_node_metric(SharedString::from(format_number(scene.node_count)));
@@ -604,9 +616,9 @@ fn rasterize_scene(scene: &SyntheticScene) -> SharedPixelBuffer<Rgba8Pixel> {
     let (scale, width, height) = raster_dimensions(scene);
     let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
     pixels.make_mut_slice().fill(Rgba8Pixel {
-        r: 0x0d,
-        g: 0x19,
-        b: 0x15,
+        r: 0x11,
+        g: 0x16,
+        b: 0x1b,
         a: 255,
     });
 
@@ -789,29 +801,24 @@ fn push_module_frame(
         y,
         width,
         height,
-        fill: Color::from_argb_u8(
-            if dense_overview { 0 } else { 105 },
-            red / 3 + 5,
-            green / 3 + 8,
-            blue / 3 + 7,
-        ),
-        border: Color::from_argb_u8(210, red, green, blue),
+        fill: Color::from_argb_u8(if dense_overview { 0 } else { 46 }, 0x18, 0x21, 0x29),
+        border: Color::from_argb_u8(155, red, green, blue),
     });
     modules.push(SceneRect {
         x: x + 8.0,
         y: y + 8.0,
         width: (width - 16.0).max(1.0),
         height: (height - 16.0).max(1.0),
-        fill: Color::from_argb_u8(if dense_overview { 0 } else { 35 }, red, green, blue),
-        border: Color::from_argb_u8(75, red, green, blue),
+        fill: Color::from_argb_u8(if dense_overview { 0 } else { 18 }, 0x21, 0x2b, 0x34),
+        border: Color::from_argb_u8(58, red, green, blue),
     });
     modules.push(SceneRect {
         x: x + 14.0,
         y: y + 12.0,
         width: (width - 28.0).min(320.0).max(1.0),
         height: 30.0,
-        fill: Color::from_argb_u8(160, 0x13, 0x27, 0x20),
-        border: Color::from_argb_u8(120, red, green, blue),
+        fill: Color::from_argb_u8(220, 0x17, 0x20, 0x28),
+        border: Color::from_argb_u8(105, red, green, blue),
     });
     let pad_color = Color::from_argb_u8(230, 0xd0, 0xa8, 0x58);
     for (pad_x, pad_y) in [
@@ -914,6 +921,7 @@ fn start_project_index(
         nodes.clear();
     }
     ui.set_project_path(SharedString::from(&root_display));
+    ui.set_view_initialized(false);
     ui.set_status_title(SharedString::from("Starting index"));
     ui.set_status_detail(SharedString::from("Preparing SQLite/WAL and file watcher"));
     ui.set_indexing(true);
@@ -1164,10 +1172,10 @@ fn display_path_for_ui(path: &PathBuf) -> String {
 
 fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>) -> SyntheticScene {
     const TREE_LAYOUT_LIMIT: usize = 360;
-    const NODE_WIDTH: f32 = 108.0;
-    const NODE_HEIGHT: f32 = 34.0;
+    const NODE_WIDTH: f32 = 126.0;
+    const NODE_HEIGHT: f32 = 36.0;
     const OUTER_MARGIN: f32 = 120.0;
-    const ROW_GAP: f32 = 34.0;
+    const ROW_GAP: f32 = 12.0;
 
     let started = Instant::now();
     let mut sources = indexed_nodes.iter().collect::<Vec<_>>();
@@ -1232,7 +1240,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
     if dense {
         const DENSE_ROWS: usize = 46;
         for depth in 1..=maximum_depth {
-            let previous_width = depth_counts[depth - 1].div_ceil(DENSE_ROWS) as f32 * 126.0;
+            let previous_width = depth_counts[depth - 1].div_ceil(DENSE_ROWS) as f32 * 144.0;
             x_by_depth[depth] = x_by_depth[depth - 1] + previous_width.max(NODE_WIDTH) + 150.0;
         }
         for depth in 0..=maximum_depth {
@@ -1243,8 +1251,8 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
                 }
                 let column = sequence / DENSE_ROWS;
                 let row = sequence % DENSE_ROWS;
-                item.x = x_by_depth[depth] + column as f32 * 126.0;
-                item.y = OUTER_MARGIN + row as f32 * (NODE_HEIGHT + 14.0);
+                item.x = x_by_depth[depth] + column as f32 * 144.0;
+                item.y = OUTER_MARGIN + row as f32 * (NODE_HEIGHT + 16.0);
                 sequence += 1;
             }
         }
@@ -1283,7 +1291,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         (0x53, 0xc8, 0xb9),
         (0x63, 0x9f, 0xdf),
         (0xb4, 0x86, 0xdc),
-        (0xe0, 0xb0, 0x5a),
+        (0xd0, 0x78, 0x9b),
     ];
 
     // Dense overviews show the actual child blocks directly. A frame around a
@@ -1343,6 +1351,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             x: frame_x + 22.0,
             y: frame_y + 17.0,
             width: (frame_width - 44.0).max(80.0),
+            always_visible: true,
             text: SharedString::from(format!(
                 "{} / {}",
                 topology[*candidate].source.display_name,
@@ -1381,18 +1390,19 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             width,
             height,
             fill: Color::from_argb_u8(
-                if is_directory { 220 } else { 178 },
-                red / 7 + 10,
-                green / 6 + 22,
-                blue / 6 + 16,
+                if is_directory { 236 } else { 220 },
+                if is_directory { 0x19 } else { 0x16 },
+                if is_directory { 0x28 } else { 0x21 },
+                if is_directory { 0x2c } else { 0x29 },
             ),
-            border: Color::from_argb_u8(230, red, green, blue),
+            border: Color::from_argb_u8(205, red, green, blue),
         });
         if show_all_labels || is_directory {
             labels.push(SceneLabel {
                 x: x + 8.0,
                 y: y + 8.0,
                 width: width - 16.0,
+                always_visible: is_directory,
                 text: SharedString::from(short_label(&source.display_name, 15)),
             });
         }
@@ -1458,19 +1468,19 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             min_y = min_y.min(target_y);
             max_y = max_y.max(target_y);
         }
-        let trace = Color::from_argb_u8(190, 0x55, 0xdf, 0x91);
+        let trace = Color::from_argb_u8(150, 0x55, 0xd8, 0x91);
         segments.push(SceneSegment {
             x: source.x + NODE_WIDTH,
             y: source_y,
             width: route_x - source.x - NODE_WIDTH,
-            height: 1.5,
+            height: 1.0,
             color: trace,
         });
         segments.push(SceneSegment {
             x: route_x,
             y: min_y,
-            width: 1.5,
-            height: (max_y - min_y).max(1.5),
+            width: 1.0,
+            height: (max_y - min_y).max(1.0),
             color: trace,
         });
         for child in children {
@@ -1479,7 +1489,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
                 x: route_x,
                 y: target.y + NODE_HEIGHT * 0.5,
                 width: target.x - route_x,
-                height: 1.5,
+                height: 1.0,
                 color: trace,
             });
         }
@@ -1660,8 +1670,8 @@ fn build_scene(count: usize) -> SyntheticScene {
 }
 
 fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
-    let grid_color = Color::from_argb_u8(38, 0x55, 0x7a, 0x64);
-    let major_color = Color::from_argb_u8(62, 0x68, 0x9a, 0x73);
+    let grid_color = Color::from_argb_u8(23, 0x78, 0x91, 0x86);
+    let major_color = Color::from_argb_u8(38, 0x78, 0xa2, 0x90);
     let mut x = 0.0;
     while x <= width {
         segments.push(SceneSegment {
@@ -1692,7 +1702,7 @@ fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
         });
         y += 120.0;
     }
-    let pad_color = Color::from_argb_u8(105, 0x6a, 0xb0, 0x78);
+    let pad_color = Color::from_argb_u8(62, 0x68, 0xb0, 0x82);
     let mut pad_x = 60.0;
     while pad_x < width {
         let mut pad_y = 60.0;

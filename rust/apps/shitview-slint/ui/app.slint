@@ -22,6 +22,7 @@ export struct SceneLabel {
     y: float,
     width: float,
     text: string,
+    always-visible: bool,
 }
 
 export component AppWindow inherits Window {
@@ -30,7 +31,7 @@ export component AppWindow inherits Window {
     preferred-height: 800px;
     min-width: 960px;
     min-height: 640px;
-    background: #101814;
+    background: #11161b;
 
     in property <[SceneRect]> graph-nodes;
     in property <[SceneRect]> graph-modules;
@@ -61,13 +62,14 @@ export component AppWindow inherits Window {
     in property <float> selected-y: 0;
     in property <float> selected-width: 0;
     in property <float> selected-height: 0;
-    in-out property <float> zoom: 0.72;
+    in-out property <float> zoom: 0.78;
     in-out property <float> pan-x: 0;
     in-out property <float> pan-y: 0;
     in-out property <float> pan-start-x: 0;
     in-out property <float> pan-start-y: 0;
     in-out property <bool> canvas-pan-enabled: true;
     in-out property <bool> canvas-interacting: false;
+    in-out property <bool> view-initialized: false;
 
     callback select-density(int);
     callback browse-project();
@@ -89,46 +91,47 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         Rectangle {
-            height: 62px;
-            background: #17201c;
-            border-color: #31463c;
+            height: 54px;
+            background: #171c22;
+            border-color: #29343d;
             border-width: 1px;
 
             HorizontalBox {
-                padding-left: 18px;
-                padding-right: 18px;
-                spacing: 12px;
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
                 alignment: center;
 
                 Image {
-                    width: 34px;
-                    height: 34px;
+                    width: 30px;
+                    height: 30px;
                     source: @image-url("../../../../resouce/shitview.jpg");
                     image-fit: cover;
                 }
 
                 VerticalBox {
-                    width: 168px;
+                    width: 132px;
                     spacing: 1px;
                     alignment: center;
                     Text {
                         text: "shitview";
                         color: #f3f6fb;
                         font-family: "Microsoft YaHei UI";
-                        font-size: 18px;
+                        font-size: 16px;
                         font-weight: 700;
                     }
                     Text {
-                        text: "RUST / SLINT";
-                        color: #6f8095;
-                        font-size: 10px;
+                        text: root.status-title;
+                        color: #738696;
+                        font-size: 9px;
+                        overflow: elide;
                     }
                 }
 
                 Rectangle { horizontal-stretch: 1; background: transparent; }
 
                 LineEdit {
-                    width: 340px;
+                    width: 300px;
                     text: root.project-path;
                     placeholder-text: "Project folder";
                     edited(text) => { root.project-path = text; }
@@ -137,19 +140,20 @@ export component AppWindow inherits Window {
                 Button { text: "BROWSE"; clicked => { root.browse-project(); } }
                 Button { text: "OPEN"; clicked => { root.open-project(root.project-path); } }
 
-                Text { text: "DENSITY"; color: #718197; font-size: 10px; }
-                Button { text: "1K"; clicked => { root.select-density(1000); } }
-                Button { text: "5K"; clicked => { root.select-density(5000); } }
-                Button { text: "10K"; clicked => { root.select-density(10000); } }
-
-                Rectangle { width: 10px; background: transparent; }
+                Text {
+                    width: 80px;
+                    horizontal-alignment: right;
+                    text: root.node-metric + " NODES";
+                    color: #8192a0;
+                    font-size: 10px;
+                }
                 Button { text: "-"; clicked => { root.zoom-out(); } }
                 Text {
                     width: 54px;
                     horizontal-alignment: center;
                     text: round(root.zoom * 100) + "%";
-                    color: #c9d3df;
-                    font-size: 12px;
+                    color: #c7d2da;
+                    font-size: 11px;
                 }
                 Button { text: "+"; clicked => { root.zoom-in(); } }
             }
@@ -159,113 +163,11 @@ export component AppWindow inherits Window {
             spacing: 0px;
 
             Rectangle {
-                width: 228px;
-                background: #141b18;
-                border-color: #2d3d35;
-                border-width: 1px;
-
-                VerticalBox {
-                    padding: 18px;
-                    spacing: 16px;
-
-                    Text { text: "SCENE"; color: #718197; font-size: 10px; font-weight: 700; }
-
-                    VerticalBox {
-                        spacing: 4px;
-                        Text { text: root.node-metric; color: #f0f5fb; font-size: 30px; font-weight: 700; }
-                        Text { text: "visible nodes"; color: #8290a2; font-size: 11px; }
-                    }
-
-                    Rectangle { height: 1px; background: #2d3d35; }
-
-                    VerticalBox {
-                        spacing: 8px;
-                        HorizontalBox {
-                            Text { text: "Primitives"; color: #7f8c9d; font-size: 11px; }
-                            Rectangle { horizontal-stretch: 1; background: transparent; }
-                            Text { text: root.primitive-metric; color: #c7d2df; font-size: 11px; }
-                        }
-                        HorizontalBox {
-                            Text { text: "Generated"; color: #7f8c9d; font-size: 11px; }
-                            Rectangle { horizontal-stretch: 1; background: transparent; }
-                            Text { text: root.generation-metric; color: #61eaa3; font-size: 11px; }
-                        }
-                        HorizontalBox {
-                            Text { text: "FPS"; color: #7f8c9d; font-size: 11px; }
-                            Rectangle { horizontal-stretch: 1; background: transparent; }
-                            Text { text: root.frame-metric; color: #61eaa3; font-size: 11px; }
-                        }
-                    }
-
-                    Rectangle { height: 1px; background: #2d3d35; }
-
-                    VerticalBox {
-                        spacing: 8px;
-                        Text { text: "INDEX"; color: #718197; font-size: 10px; font-weight: 700; }
-                        Text { text: root.status-title; color: #d3dbe5; font-size: 12px; }
-                        Text { text: root.status-detail; color: #798697; font-size: 10px; wrap: word-wrap; }
-                        HorizontalBox {
-                            spacing: 6px;
-                            if root.indexing && !root.paused: Button {
-                                text: "PAUSE";
-                                clicked => { root.pause-index(); }
-                            }
-                            if root.indexing && root.paused: Button {
-                                text: "RESUME";
-                                clicked => { root.resume-index(); }
-                            }
-                            if root.indexing: Button {
-                                text: "CANCEL";
-                                clicked => { root.cancel-index(); }
-                            }
-                        }
-                    }
-
-                    Rectangle { height: 1px; background: #2d3d35; }
-
-                    VerticalBox {
-                        spacing: 8px;
-                        Text { text: "LAYERS"; color: #718197; font-size: 10px; font-weight: 700; }
-                        Text { text: "Structure"; color: #d3dbe5; font-size: 12px; }
-                        Text { text: "Dependencies"; color: #798697; font-size: 12px; }
-                        Text { text: "Activity"; color: #798697; font-size: 12px; }
-                        Text { text: "Labels"; color: #798697; font-size: 12px; }
-                    }
-
-                    Button {
-                        text: "RESET LAYOUT";
-                        clicked => { root.reset-layout(); }
-                    }
-
-                    Rectangle { vertical-stretch: 1; background: transparent; }
-
-                    Rectangle {
-                        height: 48px;
-                        background: #19251f;
-                        border-color: #2b6a49;
-                        border-width: 1px;
-                        border-radius: 5px;
-                        HorizontalBox {
-                            padding: 10px;
-                            spacing: 8px;
-                            Rectangle {
-                                width: 7px;
-                                height: 7px;
-                                border-radius: 4px;
-                                background: #48e191;
-                            }
-                            Text { text: root.status-title; color: #9cdbb9; font-size: 11px; }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                background: #0d1915;
+                background: #11161b;
                 clip: true;
 
                 canvas := Rectangle {
-                    background: #0d1915;
+                    background: #11161b;
                     clip: true;
 
                     Image {
@@ -276,29 +178,34 @@ export component AppWindow inherits Window {
                         source-clip-y: round(root.pan-y / max(1, root.scene-height) * self.source.height);
                         source-clip-width: min(
                             self.source.width - self.source-clip-x,
-                            max(1, round(794 / root.zoom / max(1, root.scene-width) * self.source.width))
+                            max(1, round(1034 / root.zoom / max(1, root.scene-width) * self.source.width))
                         );
                         source-clip-height: min(
                             self.source.height - self.source-clip-y,
-                            max(1, round(738 / root.zoom / max(1, root.scene-height) * self.source.height))
+                            max(1, round(746 / root.zoom / max(1, root.scene-height) * self.source.height))
                         );
                         image-fit: fill;
                         cache-rendering-hint: true;
                     }
 
-                    if root.zoom > 0.42 && (!root.canvas-interacting || !root.canvas-pan-enabled): Rectangle {
+                    if !root.canvas-interacting || !root.canvas-pan-enabled: Rectangle {
                         cache-rendering-hint: true;
-                        for label in root.graph-labels: Text {
+                        for label in root.graph-labels: Rectangle {
+                            visible: root.zoom > 0.42 || label.always-visible;
                             x: (label.x - root.pan-x) * root.zoom * 1px;
                             y: (label.y - root.pan-y) * root.zoom * 1px;
                             width: label.width * root.zoom * 1px;
                             height: 28px;
-                            text: label.text;
-                            color: #dbe5ef;
-                            font-family: "Microsoft YaHei UI";
-                            font-size: max(9px, 13px * root.zoom);
-                            font-weight: 600;
-                            overflow: elide;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: label.text;
+                                color: #dbe5ef;
+                                font-family: "Microsoft YaHei UI";
+                                font-size: max(9px, 13px * root.zoom);
+                                font-weight: 600;
+                                overflow: elide;
+                            }
                         }
                     }
 
@@ -357,7 +264,7 @@ export component AppWindow inherits Window {
                                 root.zoom = min(1.60, root.zoom + 0.08);
                                 return accept;
                             } else if event.delta-y < 0 {
-                                root.zoom = max(0.28, root.zoom - 0.08);
+                                root.zoom = max(0.15, root.zoom - 0.08);
                                 return accept;
                             }
                             reject
@@ -390,23 +297,37 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                width: 258px;
-                background: #141b18;
-                border-color: #2d3d35;
+                width: 246px;
+                background: #161b21;
+                border-color: #29343d;
                 border-width: 1px;
 
                 VerticalBox {
-                    padding: 18px;
+                    padding: 16px;
                     spacing: 12px;
-                    Text { text: "INSPECTOR"; color: #718197; font-size: 10px; font-weight: 700; }
+                    Text { text: "STATUS"; color: #748694; font-size: 10px; font-weight: 700; }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { width: 6px; height: 6px; border-radius: 3px; background: #55dfa0; }
+                        Text { text: root.status-title; color: #c8d4dc; font-size: 11px; overflow: elide; }
+                    }
+                    Text { text: root.status-detail; color: #70818e; font-size: 9px; wrap: word-wrap; }
+                    if root.indexing: HorizontalBox {
+                        spacing: 6px;
+                        if !root.paused: Button { text: "PAUSE"; clicked => { root.pause-index(); } }
+                        if root.paused: Button { text: "RESUME"; clicked => { root.resume-index(); } }
+                        Button { text: "CANCEL"; clicked => { root.cancel-index(); } }
+                    }
+                    Rectangle { height: 1px; background: #29343d; }
+                    Text { text: "INSPECTOR"; color: #748694; font-size: 10px; font-weight: 700; }
                     if root.selection-available: VerticalBox {
                         spacing: 9px;
-                        Text { text: root.selected-name; color: #edf6f0; font-size: 16px; font-weight: 700; wrap: word-wrap; }
-                        Rectangle { height: 1px; background: #2d3d35; }
-                        Text { text: root.selected-kind; color: #68d89a; font-size: 11px; }
-                        Text { text: root.selected-size; color: #aab8b1; font-size: 11px; }
-                        Text { text: root.selected-children; color: #aab8b1; font-size: 11px; }
-                        Text { text: root.selected-path; color: #82928a; font-size: 10px; wrap: word-wrap; }
+                        Text { text: root.selected-name; color: #edf3f7; font-size: 15px; font-weight: 700; wrap: word-wrap; }
+                        Rectangle { height: 1px; background: #29343d; }
+                        Text { text: root.selected-kind; color: #64dca0; font-size: 11px; }
+                        Text { text: root.selected-size; color: #a6b3bc; font-size: 11px; }
+                        Text { text: root.selected-children; color: #a6b3bc; font-size: 11px; }
+                        Text { text: root.selected-path; color: #7c8d99; font-size: 10px; wrap: word-wrap; }
                         if root.selection-openable: Button {
                             text: "OPEN SOURCE";
                             clicked => { root.open-selected(); }
@@ -421,12 +342,13 @@ export component AppWindow inherits Window {
                         }
                     }
                     if !root.selection-available: Text {
-                        text: "Select a component to inspect its path and metadata.";
-                        color: #718197;
+                        text: "Select a file or folder";
+                        color: #71828f;
                         font-size: 11px;
                         wrap: word-wrap;
                     }
                     Rectangle { vertical-stretch: 1; background: transparent; }
+                    Button { text: "RESET LAYOUT"; clicked => { root.reset-layout(); } }
                 }
             }
         }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const LAYOUT_VERSION: u64 = 4;
+const LAYOUT_VERSION: u64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayoutEntry {
@@ -41,6 +41,15 @@ impl LayoutStore {
                 return (store, Some(format!("Ignoring invalid layout JSON: {error}")))
             }
         };
+        let version = value.get("version").and_then(Value::as_u64).unwrap_or(0);
+        if version < LAYOUT_VERSION {
+            return (
+                store,
+                Some(format!(
+                    "Ignoring layout version {version}; automatic layout was upgraded"
+                )),
+            );
+        }
         let Some(nodes) = value.get("nodes").and_then(Value::as_object) else {
             return (store, Some("Ignoring layout file without a nodes object".to_owned()));
         };
@@ -191,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_legacy_array_entries() {
+    fn ignores_legacy_layout_versions() {
         let root = temp_root("legacy");
         fs::create_dir_all(root.join(".shitview")).unwrap();
         fs::write(
@@ -200,11 +209,8 @@ mod tests {
         )
         .unwrap();
         let (store, warning) = LayoutStore::load(&root);
-        assert!(warning.is_none());
-        assert_eq!(
-            store.entry_for(None, "H:/project/main.rs"),
-            Some(LayoutEntry { x: 12.5, y: 8.0, pinned: false })
-        );
+        assert!(warning.unwrap().contains("Ignoring layout version 3"));
+        assert!(store.entry_for(None, "H:/project/main.rs").is_none());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -238,7 +244,7 @@ mod tests {
         );
         store.save().unwrap();
         let contents = fs::read_to_string(root.join(".shitview/layout.json")).unwrap();
-        assert!(contents.contains("\"version\": 4"));
+        assert!(contents.contains("\"version\": 5"));
         let (restored, warning) = LayoutStore::load(&root);
         assert!(warning.is_none());
         assert_eq!(
