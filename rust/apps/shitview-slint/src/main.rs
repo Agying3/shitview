@@ -1175,7 +1175,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
     const NODE_WIDTH: f32 = 126.0;
     const NODE_HEIGHT: f32 = 36.0;
     const OUTER_MARGIN: f32 = 120.0;
-    const ROW_GAP: f32 = 12.0;
+    const ROW_GAP: f32 = 4.0;
 
     let started = Instant::now();
     let mut sources = indexed_nodes.iter().collect::<Vec<_>>();
@@ -1264,7 +1264,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             }
         }
         for depth in 1..=maximum_depth {
-            let route_gap = (edge_counts[depth - 1] as f32 * 3.5 + 74.0).max(190.0);
+            let route_gap = (edge_counts[depth - 1] as f32 * 2.0 + 48.0).max(90.0);
             x_by_depth[depth] = x_by_depth[depth - 1] + NODE_WIDTH + route_gap;
         }
         let mut cursor = OUTER_MARGIN;
@@ -1455,7 +1455,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         if first_target.x <= source.x + NODE_WIDTH + 12.0 {
             continue;
         }
-        let route_x = source.x + NODE_WIDTH + 28.0 + route_positions[depth] as f32 * 3.5;
+        let route_x = source.x + NODE_WIDTH + 20.0 + route_positions[depth] as f32 * 2.0;
         route_positions[depth] += 1;
         if route_x >= first_target.x - 6.0 {
             continue;

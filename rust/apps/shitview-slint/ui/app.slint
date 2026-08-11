@@ -191,7 +191,7 @@ export component AppWindow inherits Window {
                     if !root.canvas-interacting || !root.canvas-pan-enabled: Rectangle {
                         cache-rendering-hint: true;
                         for label in root.graph-labels: Rectangle {
-                            visible: root.zoom > 0.42 || label.always-visible;
+                            visible: root.zoom > 0.34 || label.always-visible;
                             x: (label.x - root.pan-x) * root.zoom * 1px;
                             y: (label.y - root.pan-y) * root.zoom * 1px;
                             width: label.width * root.zoom * 1px;
@@ -291,6 +291,87 @@ export component AppWindow inherits Window {
                             font-family: "Microsoft YaHei UI";
                             font-size: max(9px, 12px * root.zoom);
                             overflow: elide;
+                        }
+                    }
+
+                    minimap := Rectangle {
+                        x: 14px;
+                        y: canvas.height - self.height - 14px;
+                        width: 190px;
+                        height: 126px;
+                        background: #111820e8;
+                        border-color: #3b4b55;
+                        border-width: 1px;
+                        border-radius: 4px;
+                        clip: true;
+
+                        Image {
+                            x: 4px;
+                            y: 4px;
+                            width: parent.width - 8px;
+                            height: parent.height - 8px;
+                            source: root.graph-image;
+                            image-fit: fill;
+                            opacity: 0.78;
+                            cache-rendering-hint: true;
+                        }
+
+                        Rectangle {
+                            x: 4px + root.pan-x / max(1, root.scene-width) * (minimap.width - 8px);
+                            y: 4px + root.pan-y / max(1, root.scene-height) * (minimap.height - 8px);
+                            width: max(
+                                8px,
+                                min(
+                                    minimap.width - 8px,
+                                    canvas.width / 1px / root.zoom / max(1, root.scene-width) * (minimap.width - 8px)
+                                )
+                            );
+                            height: max(
+                                8px,
+                                min(
+                                    minimap.height - 8px,
+                                    canvas.height / 1px / root.zoom / max(1, root.scene-height) * (minimap.height - 8px)
+                                )
+                            );
+                            background: #62dda018;
+                            border-color: #7ce6b2;
+                            border-width: 1px;
+                            border-radius: 2px;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.pan-x = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-width - canvas.width / 1px / root.zoom),
+                                        self.mouse-x / minimap.width * root.scene-width - canvas.width / 1px / root.zoom / 2
+                                    )
+                                );
+                                root.pan-y = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-height - canvas.height / 1px / root.zoom),
+                                        self.mouse-y / minimap.height * root.scene-height - canvas.height / 1px / root.zoom / 2
+                                    )
+                                );
+                            }
+                            moved => {
+                                root.pan-x = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-width - canvas.width / 1px / root.zoom),
+                                        self.mouse-x / minimap.width * root.scene-width - canvas.width / 1px / root.zoom / 2
+                                    )
+                                );
+                                root.pan-y = max(
+                                    0,
+                                    min(
+                                        max(0, root.scene-height - canvas.height / 1px / root.zoom),
+                                        self.mouse-y / minimap.height * root.scene-height - canvas.height / 1px / root.zoom / 2
+                                    )
+                                );
+                            }
                         }
                     }
                 }
