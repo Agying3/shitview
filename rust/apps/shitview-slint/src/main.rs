@@ -1,18 +1,18 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use slint::{
-    Color, Image, ModelRc, RenderingState, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
-    TimerMode, VecModel,
-};
 use shitview_core::NodeKind;
 use shitview_indexer::{
     default_database_path, IndexEvent, IndexHandle, IndexOptions, IndexPhase, IndexProgress,
 };
 use shitview_storage::StoredNode;
+use slint::{
+    Color, Image, ModelRc, RenderingState, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
+    TimerMode, VecModel,
+};
 mod layout;
 use layout::{LayoutEntry, LayoutStore};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -22,9 +22,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 slint::include_modules!();
-
-const MODULE_COUNT: usize = 12;
-const MODULE_COLUMNS: usize = 4;
 
 struct SyntheticScene {
     nodes: Vec<SceneRect>,
@@ -48,6 +45,14 @@ struct PreparedScene {
     spatial_index: SpatialIndex,
 }
 
+struct TopologyNode<'a> {
+    source: &'a StoredNode,
+    parent: Option<usize>,
+    children: Vec<usize>,
+    x: f32,
+    y: f32,
+}
+
 #[derive(Debug, Clone)]
 struct HitTarget {
     x: f32,
@@ -58,6 +63,10 @@ struct HitTarget {
     openable: bool,
     stable_id: Option<Vec<u8>>,
     pinned: bool,
+    display_name: String,
+    kind: String,
+    size_bytes: u64,
+    child_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -313,7 +322,11 @@ fn main() -> Result<(), slint::PlatformError> {
             layout.set(
                 state.stable_id.as_deref(),
                 &state.path,
-                LayoutEntry { x: new_x, y: new_y, pinned: true },
+                LayoutEntry {
+                    x: new_x,
+                    y: new_y,
+                    pinned: true,
+                },
             );
             if let Err(error) = layout.save() {
                 ui.set_status_detail(SharedString::from(format!("Cannot save layout: {error}")));
@@ -324,16 +337,16 @@ fn main() -> Result<(), slint::PlatformError> {
             target.y = new_y;
             target.pinned = true;
         }
-        let nodes = current_nodes_for_drag.lock().ok().map(|nodes| nodes.clone());
-        let layout = layout_store_for_drag.lock().ok().map(|layout| layout.clone());
+        let nodes = current_nodes_for_drag
+            .lock()
+            .ok()
+            .map(|nodes| nodes.clone());
+        let layout = layout_store_for_drag
+            .lock()
+            .ok()
+            .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout)) = (nodes, layout) {
-            rebuild_project_scene(
-                &ui,
-                nodes,
-                layout,
-                &interaction_for_drag,
-                Some(state.path),
-            );
+            rebuild_project_scene(&ui, nodes, layout, &interaction_for_drag, Some(state.path));
         }
     });
 
@@ -356,7 +369,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 layout.set(
                     target.stable_id.as_deref(),
                     &target.path,
-                    LayoutEntry { x: target.x, y: target.y, pinned: true },
+                    LayoutEntry {
+                        x: target.x,
+                        y: target.y,
+                        pinned: true,
+                    },
                 );
             }
             if let Err(error) = layout.save() {
@@ -365,7 +382,10 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         ui.set_selection_pinned(!target.pinned);
         let nodes = current_nodes_for_pin.lock().ok().map(|nodes| nodes.clone());
-        let layout = layout_store_for_pin.lock().ok().map(|layout| layout.clone());
+        let layout = layout_store_for_pin
+            .lock()
+            .ok()
+            .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout)) = (nodes, layout) {
             rebuild_project_scene(&ui, nodes, layout, &interaction_for_pin, Some(target.path));
         }
@@ -381,13 +401,21 @@ fn main() -> Result<(), slint::PlatformError> {
             layout.remove_all();
             if let Err(error) = layout.save() {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_status_detail(SharedString::from(format!("Cannot save layout: {error}")));
+                    ui.set_status_detail(SharedString::from(format!(
+                        "Cannot save layout: {error}"
+                    )));
                 }
                 return;
             }
         }
-        let nodes = current_nodes_for_reset.lock().ok().map(|nodes| nodes.clone());
-        let layout = layout_store_for_reset.lock().ok().map(|layout| layout.clone());
+        let nodes = current_nodes_for_reset
+            .lock()
+            .ok()
+            .map(|nodes| nodes.clone());
+        let layout = layout_store_for_reset
+            .lock()
+            .ok()
+            .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout), Some(ui)) = (nodes, layout, weak.upgrade()) {
             let selected_path = selected.borrow().as_ref().map(|target| target.path.clone());
             rebuild_project_scene(&ui, nodes, layout, &interaction_for_reset, selected_path);
@@ -459,7 +487,9 @@ fn apply_scene(ui: &AppWindow, count: usize, spatial_index: &Arc<Mutex<SpatialIn
     let prepared = prepare_scene(build_scene(count), count);
     apply_prepared_scene(ui, prepared, "", spatial_index);
     ui.set_status_title(SharedString::from("Synthetic scene ready"));
-    ui.set_status_detail(SharedString::from("Choose a project folder to build its index"));
+    ui.set_status_detail(SharedString::from(
+        "Choose a project folder to build its index",
+    ));
 }
 
 fn prepare_scene(scene: SyntheticScene, count: usize) -> PreparedScene {
@@ -493,6 +523,10 @@ fn apply_prepared_scene(
     ui.set_selection_available(false);
     ui.set_selection_openable(false);
     ui.set_selected_path(SharedString::default());
+    ui.set_selected_name(SharedString::default());
+    ui.set_selected_kind(SharedString::default());
+    ui.set_selected_size(SharedString::default());
+    ui.set_selected_children(SharedString::default());
     ui.set_scene_width(scene.width);
     ui.set_scene_height(scene.height);
     ui.set_graph_image(Image::from_rgba8(scene.pixels));
@@ -518,15 +552,55 @@ fn rasterize_scene(scene: &SyntheticScene) -> SharedPixelBuffer<Rgba8Pixel> {
     });
 
     for segment in &scene.segments {
-        draw_rect(&mut pixels, segment.x, segment.y, segment.width, segment.height, segment.color, scale);
+        draw_rect(
+            &mut pixels,
+            segment.x,
+            segment.y,
+            segment.width,
+            segment.height,
+            segment.color,
+            scale,
+        );
     }
     for module in &scene.modules {
-        draw_rect(&mut pixels, module.x, module.y, module.width, module.height, module.fill, scale);
-        draw_border(&mut pixels, module.x, module.y, module.width, module.height, module.border, scale);
+        draw_rect(
+            &mut pixels,
+            module.x,
+            module.y,
+            module.width,
+            module.height,
+            module.fill,
+            scale,
+        );
+        draw_border(
+            &mut pixels,
+            module.x,
+            module.y,
+            module.width,
+            module.height,
+            module.border,
+            scale,
+        );
     }
     for node in &scene.nodes {
-        draw_rect(&mut pixels, node.x, node.y, node.width, node.height, node.fill, scale);
-        draw_border(&mut pixels, node.x, node.y, node.width, node.height, node.border, scale);
+        draw_rect(
+            &mut pixels,
+            node.x,
+            node.y,
+            node.width,
+            node.height,
+            node.fill,
+            scale,
+        );
+        draw_border(
+            &mut pixels,
+            node.x,
+            node.y,
+            node.width,
+            node.height,
+            node.border,
+            scale,
+        );
     }
     pixels
 }
@@ -553,9 +627,25 @@ fn draw_border(
 ) {
     let thickness = (scale * 1.5).ceil().max(1.0) / scale;
     draw_rect(pixels, x, y, width, thickness, color, scale);
-    draw_rect(pixels, x, y + height - thickness, width, thickness, color, scale);
+    draw_rect(
+        pixels,
+        x,
+        y + height - thickness,
+        width,
+        thickness,
+        color,
+        scale,
+    );
     draw_rect(pixels, x, y, thickness, height, color, scale);
-    draw_rect(pixels, x + width - thickness, y, thickness, height, color, scale);
+    draw_rect(
+        pixels,
+        x + width - thickness,
+        y,
+        thickness,
+        height,
+        color,
+        scale,
+    );
 }
 
 fn push_module_frame(
@@ -567,12 +657,20 @@ fn push_module_frame(
     accent: (u8, u8, u8),
 ) {
     let (red, green, blue) = accent;
+    // Filling a multi-million-pixel pane costs more than the nodes it contains.
+    // At dense overview LOD, retain the colored glass outline and title plate only.
+    let dense_overview = width * height > 600_000.0;
     modules.push(SceneRect {
         x,
         y,
         width,
         height,
-        fill: Color::from_argb_u8(105, red / 3 + 5, green / 3 + 8, blue / 3 + 7),
+        fill: Color::from_argb_u8(
+            if dense_overview { 0 } else { 105 },
+            red / 3 + 5,
+            green / 3 + 8,
+            blue / 3 + 7,
+        ),
         border: Color::from_argb_u8(210, red, green, blue),
     });
     modules.push(SceneRect {
@@ -580,7 +678,7 @@ fn push_module_frame(
         y: y + 8.0,
         width: (width - 16.0).max(1.0),
         height: (height - 16.0).max(1.0),
-        fill: Color::from_argb_u8(35, red, green, blue),
+        fill: Color::from_argb_u8(if dense_overview { 0 } else { 35 }, red, green, blue),
         border: Color::from_argb_u8(75, red, green, blue),
     });
     modules.push(SceneRect {
@@ -617,6 +715,9 @@ fn draw_rect(
     color: Color,
     scale: f32,
 ) {
+    if color.alpha() == 0 {
+        return;
+    }
     let x0 = (x * scale).floor().max(0.0) as u32;
     let y0 = (y * scale).floor().max(0.0) as u32;
     let x1 = ((x + width) * scale).ceil().max(0.0) as u32;
@@ -732,10 +833,8 @@ fn start_project_index(
                             *current = nodes.clone();
                         }
                         let layout = layout_store.lock().ok().map(|layout| layout.clone());
-                        let prepared = prepare_scene(
-                            build_index_scene(&nodes, layout.as_ref()),
-                            node_count,
-                        );
+                        let prepared =
+                            prepare_scene(build_index_scene(&nodes, layout.as_ref()), node_count);
                         let weak = weak.clone();
                         let expected_root = root_display.clone();
                         let spatial_index = Arc::clone(&spatial_index);
@@ -820,16 +919,45 @@ fn apply_selection(ui: &AppWindow, target: Option<&HitTarget>) {
         ui.set_selection_available(false);
         ui.set_selection_openable(false);
         ui.set_selected_path(SharedString::default());
+        ui.set_selected_name(SharedString::default());
+        ui.set_selected_kind(SharedString::default());
+        ui.set_selected_size(SharedString::default());
+        ui.set_selected_children(SharedString::default());
         return;
     };
     ui.set_selection_available(true);
     ui.set_selection_openable(target.openable);
     ui.set_selection_pinned(target.pinned);
     ui.set_selected_path(SharedString::from(&target.path));
+    ui.set_selected_name(SharedString::from(&target.display_name));
+    ui.set_selected_kind(SharedString::from(&target.kind));
+    ui.set_selected_size(SharedString::from(format!(
+        "Size: {}",
+        format_bytes(target.size_bytes)
+    )));
+    ui.set_selected_children(SharedString::from(format!(
+        "Children: {}",
+        target.child_count
+    )));
     ui.set_selected_x(target.x);
     ui.set_selected_y(target.y);
     ui.set_selected_width(target.width);
     ui.set_selected_height(target.height);
+}
+
+fn format_bytes(size: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = size as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn apply_selection_by_path(ui: &AppWindow, spatial_index: &Arc<Mutex<SpatialIndex>>, path: &str) {
@@ -911,182 +1039,389 @@ fn display_path_for_ui(path: &PathBuf) -> String {
 }
 
 fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>) -> SyntheticScene {
-    const MODULE_COLUMNS_REAL: usize = 4;
-    const MODULE_CAPACITY: usize = 360;
-    const INNER_COLUMNS: usize = 18;
+    const TREE_LAYOUT_LIMIT: usize = 360;
+    const NODE_WIDTH: f32 = 108.0;
+    const NODE_HEIGHT: f32 = 34.0;
+    const OUTER_MARGIN: f32 = 120.0;
+    const ROW_GAP: f32 = 34.0;
 
     let started = Instant::now();
-    let root_path = indexed_nodes
-        .iter()
-        .find(|node| node.depth == 0)
-        .map(|node| node.display_path.as_str())
-        .unwrap_or("");
-    let mut grouped = BTreeMap::<String, Vec<&StoredNode>>::new();
-    for node in indexed_nodes {
-        let group = if node.depth == 0 {
-            "PROJECT".to_owned()
-        } else {
-            node.display_path
-                .strip_prefix(root_path)
-                .unwrap_or(&node.display_path)
-                .trim_start_matches('/')
-                .split('/')
-                .next()
-                .filter(|value| !value.is_empty())
-                .unwrap_or("PROJECT")
-                .to_owned()
-        };
-        grouped.entry(group).or_default().push(node);
+    let mut sources = indexed_nodes.iter().collect::<Vec<_>>();
+    sources.sort_unstable_by(|left, right| {
+        left.depth
+            .cmp(&right.depth)
+            .then_with(|| left.display_path.cmp(&right.display_path))
+    });
+    let mut path_index = HashMap::with_capacity(sources.len());
+    for (index, node) in sources.iter().enumerate() {
+        path_index.insert(normalize_display_path(&node.display_path), index);
     }
-    let mut modules_data = Vec::new();
-    for (group, nodes) in grouped {
-        let chunks = nodes.len().div_ceil(MODULE_CAPACITY);
-        for (index, chunk) in nodes.chunks(MODULE_CAPACITY).enumerate() {
-            let label = if chunks > 1 {
-                format!("{} {}/{}", group, index + 1, chunks)
-            } else {
-                group.clone()
-            };
-            modules_data.push((label, chunk.to_vec()));
+    let mut parents = vec![None; sources.len()];
+    for (index, node) in sources.iter().enumerate() {
+        let mut candidate = parent_display_path(&node.display_path);
+        while let Some(path) = candidate {
+            if let Some(parent) = path_index.get(&path).copied() {
+                parents[index] = Some(parent);
+                break;
+            }
+            candidate = parent_display_path(&path);
+        }
+    }
+    let mut topology = sources
+        .into_iter()
+        .enumerate()
+        .map(|(index, source)| TopologyNode {
+            source,
+            parent: parents[index],
+            children: Vec::new(),
+            x: OUTER_MARGIN,
+            y: OUTER_MARGIN,
+        })
+        .collect::<Vec<_>>();
+    for child in 0..topology.len() {
+        if let Some(parent) = topology[child].parent {
+            topology[parent].children.push(child);
         }
     }
 
-    let node_width = 44.0;
-    let node_height = 22.0;
-    let gap_x = 14.0;
-    let gap_y = 12.0;
-    let module_padding_x = 46.0;
-    let module_header = 58.0;
-    let module_width = module_padding_x * 2.0 + INNER_COLUMNS as f32 * (node_width + gap_x);
-    let module_gap_x = 180.0;
-    let module_gap_y = 180.0;
-    let outer_margin = 180.0;
-    let scene_width = outer_margin * 2.0
-        + MODULE_COLUMNS_REAL as f32 * module_width
-        + (MODULE_COLUMNS_REAL - 1) as f32 * module_gap_x;
-    let palette = [
-        (0x55, 0xc7, 0x8a),
-        (0x4b, 0xa8, 0xa2),
-        (0x56, 0x93, 0xc7),
-        (0xc1, 0x99, 0x52),
-        (0xa5, 0x75, 0xb9),
-        (0xb5, 0x67, 0x75),
-    ];
-    let mut nodes = Vec::with_capacity(indexed_nodes.len());
-    let mut modules = Vec::with_capacity(modules_data.len());
-    let mut segments = Vec::with_capacity(indexed_nodes.len() + 128);
-    let mut labels = Vec::with_capacity(modules_data.len());
-    let mut hit_targets = Vec::with_capacity(indexed_nodes.len());
-    let mut column_heights = [outer_margin; MODULE_COLUMNS_REAL];
-
-    for (module_index, (label, module_nodes)) in modules_data.into_iter().enumerate() {
-        let column = column_heights
-            .iter()
-            .enumerate()
-            .min_by(|(_, left), (_, right)| left.total_cmp(right))
-            .map(|(index, _)| index)
-            .unwrap_or(module_index % MODULE_COLUMNS_REAL);
-        let rows = module_nodes.len().max(1).div_ceil(INNER_COLUMNS);
-        let module_height = module_header + 34.0 + rows as f32 * (node_height + gap_y);
-        let module_x = outer_margin + column as f32 * (module_width + module_gap_x);
-        let module_y = column_heights[column];
-        let (red, green, blue) = palette[module_index % palette.len()];
-        push_module_frame(
-            &mut modules,
-            module_x,
-            module_y,
-            module_width,
-            module_height,
-            (red, green, blue),
-        );
-        let bus_x = module_x + 28.0;
-        let first_center_y = module_y + module_header + node_height * 0.5;
-        segments.push(SceneSegment {
-            x: bus_x,
-            y: first_center_y,
-            width: 1.5,
-            height: ((rows.saturating_sub(1)) as f32 * (node_height + gap_y)).max(1.5),
-            color: Color::from_argb_u8(170, 0x55, 0xc7, 0x8a),
-        });
-        labels.push(SceneLabel {
-            x: module_x + 20.0,
-            y: module_y + 17.0,
-            text: SharedString::from(format!("{} / {}", label, module_nodes.len())),
-        });
-        for (local_index, node) in module_nodes.into_iter().enumerate() {
-            let local_column = local_index % INNER_COLUMNS;
-            let local_row = local_index / INNER_COLUMNS;
-            let auto_x = module_x + module_padding_x + local_column as f32 * (node_width + gap_x);
-            let auto_y = module_y + module_header + local_row as f32 * (node_height + gap_y);
-            let saved = layout.and_then(|layout| {
-                layout.entry_for(node.stable_id.as_deref(), &node.display_path)
-            });
-            let (x, y, pinned) = saved
-                .map(|entry| (entry.x.max(60.0), entry.y.max(60.0), entry.pinned))
-                .unwrap_or((auto_x, auto_y, false));
-            let is_directory = node.kind == NodeKind::Directory;
-            let rendered_width = if is_directory { node_width + 4.0 } else { node_width };
-            let rendered_height = if is_directory { node_height + 2.0 } else { node_height };
-            nodes.push(SceneRect {
-                x,
-                y,
-                width: rendered_width,
-                height: rendered_height,
-                fill: Color::from_argb_u8(
-                    if is_directory { 215 } else { 155 },
-                    red / 5 + 12,
-                    green / 5 + 28,
-                    blue / 5 + 16,
-                ),
-                border: Color::from_argb_u8(220, red, green, blue),
-            });
-            hit_targets.push(HitTarget {
-                x,
-                y,
-                width: rendered_width,
-                height: rendered_height,
-                path: node.display_path.clone(),
-                openable: node.kind == NodeKind::File,
-                stable_id: node.stable_id.clone(),
-                pinned,
-            });
-            if local_column > 0 {
-                segments.push(SceneSegment {
-                    x: x - gap_x,
-                    y: y + node_height * 0.5,
-                    width: gap_x,
-                    height: 1.5,
-                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
-                });
-            } else {
-                segments.push(SceneSegment {
-                    x: bus_x,
-                    y: y + node_height * 0.5,
-                    width: (x - bus_x).max(1.0),
-                    height: 1.5,
-                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
-                });
+    let root = topology
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| {
+            left.source
+                .depth
+                .cmp(&right.source.depth)
+                .then_with(|| left.source.display_path.cmp(&right.source.display_path))
+        })
+        .map(|(index, _)| index);
+    let maximum_depth = topology
+        .iter()
+        .map(|item| item.source.depth)
+        .max()
+        .unwrap_or(0);
+    let mut depth_counts = vec![0usize; maximum_depth + 1];
+    for item in &topology {
+        depth_counts[item.source.depth] += 1;
+    }
+    let dense = topology.len() > TREE_LAYOUT_LIMIT;
+    let mut x_by_depth = vec![OUTER_MARGIN; maximum_depth + 1];
+    if dense {
+        const DENSE_ROWS: usize = 46;
+        for depth in 1..=maximum_depth {
+            let previous_width = depth_counts[depth - 1].div_ceil(DENSE_ROWS) as f32 * 126.0;
+            x_by_depth[depth] = x_by_depth[depth - 1] + previous_width.max(NODE_WIDTH) + 150.0;
+        }
+        for depth in 0..=maximum_depth {
+            let mut sequence = 0usize;
+            for item in &mut topology {
+                if item.source.depth != depth {
+                    continue;
+                }
+                let column = sequence / DENSE_ROWS;
+                let row = sequence % DENSE_ROWS;
+                item.x = x_by_depth[depth] + column as f32 * 126.0;
+                item.y = OUTER_MARGIN + row as f32 * (NODE_HEIGHT + 14.0);
+                sequence += 1;
             }
         }
-        column_heights[column] = module_y + module_height + module_gap_y;
+    } else {
+        let mut edge_counts = vec![0usize; maximum_depth + 1];
+        for item in &topology {
+            if item.parent.is_some() && item.source.depth < maximum_depth {
+                edge_counts[item.source.depth] += 1;
+            }
+        }
+        for depth in 1..=maximum_depth {
+            let route_gap = (edge_counts[depth - 1] as f32 * 3.5 + 74.0).max(190.0);
+            x_by_depth[depth] = x_by_depth[depth - 1] + NODE_WIDTH + route_gap;
+        }
+        let mut cursor = OUTER_MARGIN;
+        if let Some(root) = root {
+            layout_tree(root, &mut topology, &mut cursor, NODE_HEIGHT + ROW_GAP);
+        }
+        for index in 0..topology.len() {
+            if topology[index].parent.is_none() && Some(index) != root {
+                layout_tree(index, &mut topology, &mut cursor, NODE_HEIGHT + ROW_GAP);
+            }
+        }
+        for item in &mut topology {
+            item.x = x_by_depth[item.source.depth];
+        }
     }
-    let scene_height = column_heights.iter().copied().fold(outer_margin, f32::max);
-    let mut board_grid = Vec::new();
-    add_grid(&mut board_grid, scene_width, scene_height);
-    board_grid.extend(segments);
-    segments = board_grid;
+
+    let mut nodes = Vec::with_capacity(topology.len());
+    let mut modules = Vec::new();
+    let mut segments = Vec::with_capacity(topology.len() * 3 + 256);
+    let mut labels = Vec::with_capacity(topology.len().min(800));
+    let mut hit_targets = Vec::with_capacity(topology.len());
+    let palette = [
+        (0x48, 0xe1, 0x91),
+        (0x53, 0xc8, 0xb9),
+        (0x63, 0x9f, 0xdf),
+        (0xb4, 0x86, 0xdc),
+        (0xe0, 0xb0, 0x5a),
+    ];
+
+    let group_candidates = if dense {
+        topology
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (item.source.kind == NodeKind::Directory
+                    && item.source.depth == 1
+                    && item.children.len() >= 2)
+                    .then_some(index)
+            })
+            .take(24)
+            .collect::<Vec<_>>()
+    } else {
+        topology
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (item.source.kind == NodeKind::Directory
+                    && item.source.depth > 0
+                    && item.children.len() >= 2)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>()
+    };
+    for candidate in &group_candidates {
+        let has_candidate_descendant = group_candidates
+            .iter()
+            .any(|other| other != candidate && is_descendant(*other, *candidate, &topology));
+        if has_candidate_descendant {
+            continue;
+        }
+        let descendants = collect_descendants(*candidate, &topology);
+        let min_x = descendants
+            .iter()
+            .map(|index| topology[*index].x)
+            .fold(f32::INFINITY, f32::min);
+        let max_x = descendants
+            .iter()
+            .map(|index| topology[*index].x + NODE_WIDTH)
+            .fold(0.0_f32, f32::max);
+        let min_y = descendants
+            .iter()
+            .map(|index| topology[*index].y)
+            .fold(f32::INFINITY, f32::min);
+        let max_y = descendants
+            .iter()
+            .map(|index| topology[*index].y + NODE_HEIGHT)
+            .fold(0.0_f32, f32::max);
+        let (red, green, blue) = palette[*candidate % palette.len()];
+        let frame_x = min_x - 34.0;
+        let frame_y = min_y - 52.0;
+        let frame_width = (max_x - min_x) + 68.0;
+        let frame_height = (max_y - min_y) + 86.0;
+        push_module_frame(
+            &mut modules,
+            frame_x,
+            frame_y,
+            frame_width,
+            frame_height,
+            (red, green, blue),
+        );
+        labels.push(SceneLabel {
+            x: frame_x + 22.0,
+            y: frame_y + 17.0,
+            text: SharedString::from(format!(
+                "{} / {}",
+                topology[*candidate].source.display_name,
+                descendants.len()
+            )),
+        });
+    }
+
+    let show_all_labels = topology.len() <= 800;
+    for (index, item) in topology.iter_mut().enumerate() {
+        let source = item.source;
+        let saved = layout
+            .and_then(|layout| layout.entry_for(source.stable_id.as_deref(), &source.display_path));
+        let (x, y, pinned) = saved
+            .map(|entry| (entry.x.max(60.0), entry.y.max(60.0), entry.pinned))
+            .unwrap_or((item.x, item.y, false));
+        item.x = x;
+        item.y = y;
+        let (red, green, blue) = palette[(source.depth + index) % palette.len()];
+        let is_directory = source.kind == NodeKind::Directory;
+        let width = if is_directory {
+            NODE_WIDTH + 10.0
+        } else {
+            NODE_WIDTH
+        };
+        let height = if is_directory {
+            NODE_HEIGHT + 4.0
+        } else {
+            NODE_HEIGHT
+        };
+        nodes.push(SceneRect {
+            x,
+            y,
+            width,
+            height,
+            fill: Color::from_argb_u8(
+                if is_directory { 220 } else { 178 },
+                red / 7 + 10,
+                green / 6 + 22,
+                blue / 6 + 16,
+            ),
+            border: Color::from_argb_u8(230, red, green, blue),
+        });
+        if show_all_labels || is_directory {
+            labels.push(SceneLabel {
+                x: x + 8.0,
+                y: y + 8.0,
+                text: SharedString::from(short_label(&source.display_name, 15)),
+            });
+        }
+        hit_targets.push(HitTarget {
+            x,
+            y,
+            width,
+            height,
+            path: source.display_path.clone(),
+            openable: source.kind == NodeKind::File,
+            stable_id: source.stable_id.clone(),
+            pinned,
+            display_name: source.display_name.clone(),
+            kind: if is_directory { "Directory" } else { "File" }.to_owned(),
+            size_bytes: source.size_bytes,
+            child_count: item.children.len(),
+        });
+    }
+
+    let mut routes = topology
+        .iter()
+        .enumerate()
+        .filter_map(|(child, item)| item.parent.map(|parent| (parent, child)))
+        .filter(|(_, child)| {
+            !dense
+                || topology[*child].source.kind == NodeKind::Directory
+                || topology[*child].source.depth <= 1
+        })
+        .collect::<Vec<_>>();
+    if dense {
+        routes.truncate(220);
+    }
+    routes.sort_unstable_by(|(left_parent, left_child), (right_parent, right_child)| {
+        topology[*left_parent]
+            .source
+            .depth
+            .cmp(&topology[*right_parent].source.depth)
+            .then_with(|| topology[*left_child].y.total_cmp(&topology[*right_child].y))
+    });
+    let mut route_positions = vec![0usize; maximum_depth + 1];
+    for (parent, child) in routes {
+        let depth = topology[parent].source.depth;
+        let source = &topology[parent];
+        let target = &topology[child];
+        if target.x <= source.x + NODE_WIDTH + 12.0 {
+            continue;
+        }
+        let route_x = source.x + NODE_WIDTH + 28.0 + route_positions[depth] as f32 * 3.5;
+        route_positions[depth] += 1;
+        if route_x >= target.x - 6.0 {
+            continue;
+        }
+        let source_y = source.y + NODE_HEIGHT * 0.5;
+        let target_y = target.y + NODE_HEIGHT * 0.5;
+        let trace = Color::from_argb_u8(190, 0x55, 0xdf, 0x91);
+        segments.push(SceneSegment {
+            x: source.x + NODE_WIDTH,
+            y: source_y,
+            width: route_x - source.x - NODE_WIDTH,
+            height: 1.5,
+            color: trace,
+        });
+        segments.push(SceneSegment {
+            x: route_x,
+            y: source_y.min(target_y),
+            width: 1.5,
+            height: (source_y - target_y).abs().max(1.5),
+            color: trace,
+        });
+        segments.push(SceneSegment {
+            x: route_x,
+            y: target_y,
+            width: target.x - route_x,
+            height: 1.5,
+            color: trace,
+        });
+    }
+
     let mut scene = SyntheticScene {
         nodes,
         modules,
         segments,
         labels,
         hit_targets,
-        width: scene_width,
-        height: scene_height,
+        width: OUTER_MARGIN * 2.0 + NODE_WIDTH,
+        height: OUTER_MARGIN * 2.0 + NODE_HEIGHT,
         elapsed: started.elapsed(),
     };
     normalize_scene_bounds(&mut scene);
+    let mut board_grid = Vec::new();
+    add_grid(&mut board_grid, scene.width, scene.height);
+    board_grid.extend(scene.segments);
+    scene.segments = board_grid;
     scene
+}
+
+fn normalize_display_path(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_owned()
+}
+
+fn parent_display_path(path: &str) -> Option<String> {
+    let normalized = normalize_display_path(path);
+    normalized
+        .rsplit_once('/')
+        .map(|(parent, _)| parent.to_owned())
+}
+
+fn layout_tree(index: usize, topology: &mut [TopologyNode<'_>], cursor: &mut f32, row_step: f32) {
+    let children = topology[index].children.clone();
+    if children.is_empty() {
+        topology[index].y = *cursor;
+        *cursor += row_step;
+        return;
+    }
+    for child in &children {
+        layout_tree(*child, topology, cursor, row_step);
+    }
+    topology[index].y = (topology[children[0]].y + topology[*children.last().unwrap()].y) * 0.5;
+}
+
+fn is_descendant(index: usize, ancestor: usize, topology: &[TopologyNode<'_>]) -> bool {
+    let mut current = topology[index].parent;
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        current = topology[parent].parent;
+    }
+    false
+}
+
+fn collect_descendants(index: usize, topology: &[TopologyNode<'_>]) -> Vec<usize> {
+    let mut descendants = vec![index];
+    let mut cursor = 0;
+    while cursor < descendants.len() {
+        descendants.extend(topology[descendants[cursor]].children.iter().copied());
+        cursor += 1;
+    }
+    descendants
+}
+
+fn short_label(name: &str, maximum_chars: usize) -> String {
+    let mut characters = name.chars();
+    let label = characters.by_ref().take(maximum_chars).collect::<String>();
+    if characters.next().is_some() {
+        format!("{label}...")
+    } else {
+        label
+    }
 }
 
 fn normalize_scene_bounds(scene: &mut SyntheticScene) {
@@ -1109,21 +1444,34 @@ fn normalize_scene_bounds(scene: &mut SyntheticScene) {
 #[cfg(windows)]
 fn choose_project_folder() -> Option<PathBuf> {
     let script = "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Open project folder'; $dialog.ShowNewFolderButton = $false; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }";
-    command_folder_output("powershell.exe", &["-NoProfile", "-STA", "-Command", script])
+    command_folder_output(
+        "powershell.exe",
+        &["-NoProfile", "-STA", "-Command", script],
+    )
 }
 
 #[cfg(target_os = "macos")]
 fn choose_project_folder() -> Option<PathBuf> {
     command_folder_output(
         "osascript",
-        &["-e", "POSIX path of (choose folder with prompt \"Open project folder\")"],
+        &[
+            "-e",
+            "POSIX path of (choose folder with prompt \"Open project folder\")",
+        ],
     )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn choose_project_folder() -> Option<PathBuf> {
-    command_folder_output("zenity", &["--file-selection", "--directory", "--title=Open project folder"])
-        .or_else(|| command_folder_output("kdialog", &["--getexistingdirectory", "."]))
+    command_folder_output(
+        "zenity",
+        &[
+            "--file-selection",
+            "--directory",
+            "--title=Open project folder",
+        ],
+    )
+    .or_else(|| command_folder_output("kdialog", &["--getexistingdirectory", "."]))
 }
 
 fn command_folder_output(program: &str, arguments: &[&str]) -> Option<PathBuf> {
@@ -1140,127 +1488,41 @@ fn command_folder_output(program: &str, arguments: &[&str]) -> Option<PathBuf> {
 }
 
 fn build_scene(count: usize) -> SyntheticScene {
-    let started = Instant::now();
-    let nodes_per_module = count.div_ceil(MODULE_COUNT);
-    let inner_columns = ((nodes_per_module as f32).sqrt().ceil() as usize).max(1);
-    let inner_rows = nodes_per_module.div_ceil(inner_columns);
-
-    let node_width = 44.0;
-    let node_height = 22.0;
-    let gap_x = 14.0;
-    let gap_y = 12.0;
-    let module_padding_x = 46.0;
-    let module_header = 58.0;
-    let module_width = module_padding_x * 2.0 + inner_columns as f32 * (node_width + gap_x);
-    let module_height = module_header + 34.0 + inner_rows as f32 * (node_height + gap_y);
-    let module_gap_x = 180.0;
-    let module_gap_y = 180.0;
-    let outer_margin = 180.0;
-
-    let palette = [
-        (0x55, 0xc7, 0x8a),
-        (0x4b, 0xa8, 0xa2),
-        (0x56, 0x93, 0xc7),
-        (0xc1, 0x99, 0x52),
-        (0xa5, 0x75, 0xb9),
-        (0xb5, 0x67, 0x75),
-    ];
-
+    if count == 0 {
+        return build_index_scene(&[], None);
+    }
+    let module_count = (count - 1).min(12);
     let mut nodes = Vec::with_capacity(count);
-    let mut modules = Vec::with_capacity(MODULE_COUNT);
-    let mut segments = Vec::with_capacity(count + 128);
-    let mut labels = Vec::with_capacity(MODULE_COUNT);
-    let mut hit_targets = Vec::with_capacity(count);
-
-    let scene_width = outer_margin * 2.0
-        + MODULE_COLUMNS as f32 * module_width
-        + (MODULE_COLUMNS - 1) as f32 * module_gap_x;
-    let module_rows = MODULE_COUNT.div_ceil(MODULE_COLUMNS);
-    let scene_height = outer_margin * 2.0
-        + module_rows as f32 * module_height
-        + (module_rows - 1) as f32 * module_gap_y;
-
-    add_grid(&mut segments, scene_width, scene_height);
-
-    let mut remaining = count;
-    for module_index in 0..MODULE_COUNT {
-        let column = module_index % MODULE_COLUMNS;
-        let row = module_index / MODULE_COLUMNS;
-        let module_x = outer_margin + column as f32 * (module_width + module_gap_x);
-        let module_y = outer_margin + row as f32 * (module_height + module_gap_y);
-        let (red, green, blue) = palette[module_index % palette.len()];
-
-        push_module_frame(
-            &mut modules,
-            module_x,
-            module_y,
-            module_width,
-            module_height,
-            (red, green, blue),
-        );
-        labels.push(SceneLabel {
-            x: module_x + 20.0,
-            y: module_y + 17.0,
-            text: SharedString::from(format!("MODULE {:02}", module_index + 1)),
+    nodes.push(StoredNode {
+        stable_id: None,
+        display_path: "synthetic:/project".to_owned(),
+        display_name: "project".to_owned(),
+        kind: NodeKind::Directory,
+        depth: 0,
+        size_bytes: 0,
+    });
+    for module in 0..module_count {
+        nodes.push(StoredNode {
+            stable_id: None,
+            display_path: format!("synthetic:/project/module-{module:02}"),
+            display_name: format!("module-{module:02}"),
+            kind: NodeKind::Directory,
+            depth: 1,
+            size_bytes: 0,
         });
-
-        let module_node_count = remaining.min(nodes_per_module);
-        remaining -= module_node_count;
-        for local_index in 0..module_node_count {
-            let local_column = local_index % inner_columns;
-            let local_row = local_index / inner_columns;
-            let x = module_x + module_padding_x + local_column as f32 * (node_width + gap_x);
-            let y = module_y + module_header + local_row as f32 * (node_height + gap_y);
-            let is_directory = local_index % 17 == 0;
-            let rendered_width = if is_directory { node_width + 4.0 } else { node_width };
-            let rendered_height = if is_directory { node_height + 2.0 } else { node_height };
-
-            nodes.push(SceneRect {
-                x,
-                y,
-                width: rendered_width,
-                height: rendered_height,
-                fill: Color::from_argb_u8(
-                    if is_directory { 205 } else { 155 },
-                    red / 5 + 12,
-                    green / 5 + 28,
-                    blue / 5 + 16,
-                ),
-                border: Color::from_argb_u8(220, red, green, blue),
-            });
-            hit_targets.push(HitTarget {
-                x,
-                y,
-                width: rendered_width,
-                height: rendered_height,
-                path: format!("synthetic://module-{}/node-{}", module_index + 1, local_index + 1),
-                openable: false,
-                stable_id: None,
-                pinned: false,
-            });
-
-            if local_column > 0 {
-                segments.push(SceneSegment {
-                    x: x - gap_x,
-                    y: y + node_height * 0.5,
-                    width: gap_x,
-                    height: 1.5,
-                    color: Color::from_argb_u8(210, 0x67, 0xd9, 0x9a),
-                });
-            }
-        }
     }
-
-    SyntheticScene {
-        nodes,
-        modules,
-        segments,
-        labels,
-        hit_targets,
-        width: scene_width,
-        height: scene_height,
-        elapsed: started.elapsed(),
+    for index in nodes.len()..count {
+        let module = (index - 1) % module_count.max(1);
+        nodes.push(StoredNode {
+            stable_id: None,
+            display_path: format!("synthetic:/project/module-{module:02}/node-{index:05}.rs"),
+            display_name: format!("node-{index:05}.rs"),
+            kind: NodeKind::File,
+            depth: 2,
+            size_bytes: (index * 128) as u64,
+        });
     }
+    build_index_scene(&nodes, None)
 }
 
 fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
@@ -1273,7 +1535,11 @@ fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
             y: 0.0,
             width: 1.0,
             height,
-            color: if (x as i32) % 480 == 0 { major_color } else { grid_color },
+            color: if (x as i32) % 480 == 0 {
+                major_color
+            } else {
+                grid_color
+            },
         });
         x += 120.0;
     }
@@ -1284,7 +1550,11 @@ fn add_grid(segments: &mut Vec<SceneSegment>, width: f32, height: f32) {
             y,
             width,
             height: 1.0,
-            color: if (y as i32) % 480 == 0 { major_color } else { grid_color },
+            color: if (y as i32) % 480 == 0 {
+                major_color
+            } else {
+                grid_color
+            },
         });
         y += 120.0;
     }
@@ -1320,7 +1590,10 @@ fn format_number(value: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_index_scene, build_scene, raster_dimensions, rasterize_scene, LayoutEntry, LayoutStore, SpatialIndex};
+    use super::{
+        build_index_scene, build_scene, raster_dimensions, rasterize_scene, LayoutEntry,
+        LayoutStore, SpatialIndex,
+    };
     use shitview_core::NodeKind;
     use shitview_storage::StoredNode;
     use std::time::Instant;
@@ -1382,9 +1655,16 @@ mod tests {
         layout.set(
             file.stable_id.as_deref(),
             &file.display_path,
-            LayoutEntry { x: 777.0, y: 333.0, pinned: true },
+            LayoutEntry {
+                x: 777.0,
+                y: 333.0,
+                pinned: true,
+            },
         );
-        for nodes in [vec![root.clone(), file.clone()], vec![file.clone(), root.clone()]] {
+        for nodes in [
+            vec![root.clone(), file.clone()],
+            vec![file.clone(), root.clone()],
+        ] {
             let scene = build_index_scene(&nodes, Some(&layout));
             let target = scene
                 .hit_targets
@@ -1394,5 +1674,84 @@ mod tests {
             assert_eq!((target.x, target.y), (777.0, 333.0));
             assert!(target.pinned);
         }
+    }
+
+    #[test]
+    fn indexed_tree_uses_rightward_layers_and_leaf_only_frames() {
+        let directory = |path: &str, depth: usize| StoredNode {
+            stable_id: None,
+            display_path: path.to_owned(),
+            display_name: path.rsplit('/').next().unwrap().to_owned(),
+            kind: NodeKind::Directory,
+            depth,
+            size_bytes: 0,
+        };
+        let file = |path: &str, depth: usize| StoredNode {
+            stable_id: None,
+            display_path: path.to_owned(),
+            display_name: path.rsplit('/').next().unwrap().to_owned(),
+            kind: NodeKind::File,
+            depth,
+            size_bytes: 32,
+        };
+        let nodes = vec![
+            directory("H:/project", 0),
+            directory("H:/project/src", 1),
+            directory("H:/project/src/core", 2),
+            directory("H:/project/src/services", 2),
+            file("H:/project/src/core/layout.rs", 3),
+            file("H:/project/src/core/model.rs", 3),
+            file("H:/project/src/services/index.rs", 3),
+            file("H:/project/src/services/watch.rs", 3),
+        ];
+        let scene = build_index_scene(&nodes, None);
+        let x_for = |path: &str| {
+            scene
+                .hit_targets
+                .iter()
+                .find(|target| target.path == path)
+                .unwrap()
+                .x
+        };
+        assert!(x_for("H:/project") < x_for("H:/project/src"));
+        assert!(x_for("H:/project/src") < x_for("H:/project/src/core"));
+        // Each leaf group creates an outer glass rect, an inner glass rect, a title plate,
+        // and three copper pads. The parent src group is intentionally not framed.
+        assert_eq!(scene.modules.len(), 12);
+        assert!(scene
+            .labels
+            .iter()
+            .any(|label| label.text.as_str() == "core / 3"));
+        assert!(scene
+            .labels
+            .iter()
+            .any(|label| label.text.as_str() == "services / 3"));
+    }
+
+    #[test]
+    fn dense_index_scene_limits_labels_without_dropping_nodes() {
+        let mut nodes = vec![StoredNode {
+            stable_id: None,
+            display_path: "H:/project".to_owned(),
+            display_name: "project".to_owned(),
+            kind: NodeKind::Directory,
+            depth: 0,
+            size_bytes: 0,
+        }];
+        for index in 0..1_000 {
+            nodes.push(StoredNode {
+                stable_id: None,
+                display_path: format!("H:/project/src/file-{index:04}.rs"),
+                display_name: format!("file-{index:04}.rs"),
+                kind: NodeKind::File,
+                depth: 2,
+                size_bytes: index as u64,
+            });
+        }
+        let scene = build_index_scene(&nodes, None);
+        let (_, width, height) = raster_dimensions(&scene);
+        assert_eq!(scene.hit_targets.len(), 1_001);
+        assert!(scene.labels.len() < 20);
+        assert!(width <= 4_096 && height <= 4_096);
     }
 }

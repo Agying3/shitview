@@ -49,6 +49,10 @@ export component AppWindow inherits Window {
     in property <bool> paused: false;
     in property <bool> benchmark-active: true;
     in property <string> selected-path: "";
+    in property <string> selected-name: "";
+    in property <string> selected-kind: "";
+    in property <string> selected-size: "";
+    in property <string> selected-children: "";
     in property <bool> selection-available: false;
     in property <bool> selection-openable: false;
     in property <bool> selection-pinned: false;
@@ -223,24 +227,6 @@ export component AppWindow inherits Window {
                         Text { text: "Labels"; color: #798697; font-size: 12px; }
                     }
 
-                    if root.selection-available: VerticalBox {
-                        spacing: 6px;
-                        Text { text: "SELECTED"; color: #718197; font-size: 10px; font-weight: 700; }
-                        Text { text: root.selected-path; color: #d3dbe5; font-size: 10px; wrap: word-wrap; }
-                        if root.selection-openable: Button {
-                            text: "OPEN SOURCE";
-                            clicked => { root.open-selected(); }
-                        }
-                        if !root.selection-pinned: Button {
-                            text: "PIN";
-                            clicked => { root.pin-selected(); }
-                        }
-                        if root.selection-pinned: Button {
-                            text: "UNPIN";
-                            clicked => { root.pin-selected(); }
-                        }
-                    }
-
                     Button {
                         text: "RESET LAYOUT";
                         clicked => { root.reset-layout(); }
@@ -346,6 +332,47 @@ export component AppWindow inherits Window {
                             border-radius: 3px;
                         }
                     }
+                }
+            }
+
+            Rectangle {
+                width: 258px;
+                background: #141b18;
+                border-color: #2d3d35;
+                border-width: 1px;
+
+                VerticalBox {
+                    padding: 18px;
+                    spacing: 12px;
+                    Text { text: "INSPECTOR"; color: #718197; font-size: 10px; font-weight: 700; }
+                    if root.selection-available: VerticalBox {
+                        spacing: 9px;
+                        Text { text: root.selected-name; color: #edf6f0; font-size: 16px; font-weight: 700; wrap: word-wrap; }
+                        Rectangle { height: 1px; background: #2d3d35; }
+                        Text { text: root.selected-kind; color: #68d89a; font-size: 11px; }
+                        Text { text: root.selected-size; color: #aab8b1; font-size: 11px; }
+                        Text { text: root.selected-children; color: #aab8b1; font-size: 11px; }
+                        Text { text: root.selected-path; color: #82928a; font-size: 10px; wrap: word-wrap; }
+                        if root.selection-openable: Button {
+                            text: "OPEN SOURCE";
+                            clicked => { root.open-selected(); }
+                        }
+                        if !root.selection-pinned: Button {
+                            text: "PIN POSITION";
+                            clicked => { root.pin-selected(); }
+                        }
+                        if root.selection-pinned: Button {
+                            text: "UNPIN POSITION";
+                            clicked => { root.pin-selected(); }
+                        }
+                    }
+                    if !root.selection-available: Text {
+                        text: "Select a component to inspect its path and metadata.";
+                        color: #718197;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
                 }
             }
         }
