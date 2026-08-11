@@ -271,6 +271,7 @@ fn main() -> Result<(), slint::PlatformError> {
             start_pointer_y: y,
         });
         if let Some(ui) = weak.upgrade() {
+            ui.set_canvas_pan_enabled(hit.is_none());
             apply_selection(&ui, hit.as_ref());
         }
     });
@@ -307,6 +308,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        ui.set_canvas_pan_enabled(true);
         if let Ok(mut layout) = layout_store_for_drag.lock() {
             layout.set(
                 state.stable_id.as_deref(),
@@ -570,7 +572,7 @@ fn push_module_frame(
         y,
         width,
         height,
-        fill: Color::from_argb_u8(235, 0x0f, 0x20, 0x1a),
+        fill: Color::from_argb_u8(105, red / 3 + 5, green / 3 + 8, blue / 3 + 7),
         border: Color::from_argb_u8(210, red, green, blue),
     });
     modules.push(SceneRect {
@@ -578,7 +580,7 @@ fn push_module_frame(
         y: y + 8.0,
         width: (width - 16.0).max(1.0),
         height: (height - 16.0).max(1.0),
-        fill: Color::from_argb_u8(20, red, green, blue),
+        fill: Color::from_argb_u8(35, red, green, blue),
         border: Color::from_argb_u8(75, red, green, blue),
     });
     modules.push(SceneRect {
@@ -586,7 +588,7 @@ fn push_module_frame(
         y: y + 12.0,
         width: (width - 28.0).min(320.0).max(1.0),
         height: 30.0,
-        fill: Color::from_argb_u8(230, 0x13, 0x27, 0x20),
+        fill: Color::from_argb_u8(160, 0x13, 0x27, 0x20),
         border: Color::from_argb_u8(120, red, green, blue),
     });
     let pad_color = Color::from_argb_u8(230, 0xd0, 0xa8, 0x58);
@@ -949,16 +951,16 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         }
     }
 
-    let node_width = 38.0;
-    let node_height = 18.0;
-    let gap_x = 12.0;
-    let gap_y = 11.0;
+    let node_width = 44.0;
+    let node_height = 22.0;
+    let gap_x = 14.0;
+    let gap_y = 12.0;
     let module_padding_x = 46.0;
     let module_header = 58.0;
     let module_width = module_padding_x * 2.0 + INNER_COLUMNS as f32 * (node_width + gap_x);
-    let module_gap_x = 88.0;
-    let module_gap_y = 92.0;
-    let outer_margin = 90.0;
+    let module_gap_x = 180.0;
+    let module_gap_y = 180.0;
+    let outer_margin = 180.0;
     let scene_width = outer_margin * 2.0
         + MODULE_COLUMNS_REAL as f32 * module_width
         + (MODULE_COLUMNS_REAL - 1) as f32 * module_gap_x;
@@ -1143,17 +1145,17 @@ fn build_scene(count: usize) -> SyntheticScene {
     let inner_columns = ((nodes_per_module as f32).sqrt().ceil() as usize).max(1);
     let inner_rows = nodes_per_module.div_ceil(inner_columns);
 
-    let node_width = 38.0;
-    let node_height = 18.0;
-    let gap_x = 12.0;
-    let gap_y = 11.0;
+    let node_width = 44.0;
+    let node_height = 22.0;
+    let gap_x = 14.0;
+    let gap_y = 12.0;
     let module_padding_x = 46.0;
     let module_header = 58.0;
     let module_width = module_padding_x * 2.0 + inner_columns as f32 * (node_width + gap_x);
     let module_height = module_header + 34.0 + inner_rows as f32 * (node_height + gap_y);
-    let module_gap_x = 88.0;
-    let module_gap_y = 92.0;
-    let outer_margin = 90.0;
+    let module_gap_x = 180.0;
+    let module_gap_y = 180.0;
+    let outer_margin = 180.0;
 
     let palette = [
         (0x55, 0xc7, 0x8a),

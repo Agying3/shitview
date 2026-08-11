@@ -58,6 +58,7 @@ export component AppWindow inherits Window {
     in property <float> selected-height: 0;
     in-out property <float> zoom: 0.72;
     in-out property <float> pulse: 0;
+    in-out property <bool> canvas-pan-enabled: true;
 
     callback select-density(int);
     callback browse-project();
@@ -273,6 +274,7 @@ export component AppWindow inherits Window {
                 clip: true;
 
                 ScrollView {
+                    mouse-drag-pan-enabled: root.canvas-pan-enabled;
                     viewport-width: root.scene-width * root.zoom * 1px;
                     viewport-height: root.scene-height * root.zoom * 1px;
 
@@ -320,6 +322,16 @@ export component AppWindow inherits Window {
                                 } else if event.kind == PointerEventKind.up {
                                     root.canvas-released(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
                                 }
+                            }
+                            scroll-event(event) => {
+                                if event.delta-y > 0 {
+                                    root.zoom = min(1.60, root.zoom + 0.08);
+                                    return accept;
+                                } else if event.delta-y < 0 {
+                                    root.zoom = max(0.28, root.zoom - 0.08);
+                                    return accept;
+                                }
+                                reject
                             }
                         }
 
