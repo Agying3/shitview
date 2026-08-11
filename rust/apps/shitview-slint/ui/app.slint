@@ -182,7 +182,7 @@ export component AppWindow inherits Window {
                         cache-rendering-hint: true;
                     }
 
-                    if !root.canvas-interacting || !root.canvas-pan-enabled: Rectangle {
+                    Rectangle {
                         cache-rendering-hint: true;
                         for label in root.graph-labels: Rectangle {
                             visible: root.zoom >= 0.30 || label.always-visible;
