@@ -20,6 +20,7 @@ export struct SceneSegment {
 export struct SceneLabel {
     x: float,
     y: float,
+    width: float,
     text: string,
 }
 
@@ -289,11 +290,14 @@ export component AppWindow inherits Window {
                         for label in root.graph-labels: Text {
                             x: (label.x - root.pan-x) * root.zoom * 1px;
                             y: (label.y - root.pan-y) * root.zoom * 1px;
+                            width: label.width * root.zoom * 1px;
+                            height: 28px;
                             text: label.text;
                             color: #dbe5ef;
                             font-family: "Microsoft YaHei UI";
                             font-size: max(9px, 13px * root.zoom);
                             font-weight: 600;
+                            overflow: elide;
                         }
                     }
 

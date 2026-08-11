@@ -1286,18 +1286,10 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         (0xe0, 0xb0, 0x5a),
     ];
 
+    // Dense overviews show the actual child blocks directly. A frame around a
+    // whole top-level branch turns the overview into one large empty container.
     let group_candidates = if dense {
-        topology
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                (item.source.kind == NodeKind::Directory
-                    && item.source.depth == 1
-                    && item.children.len() >= 2)
-                    .then_some(index)
-            })
-            .take(24)
-            .collect::<Vec<_>>()
+        Vec::new()
     } else {
         topology
             .iter()
@@ -1350,6 +1342,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         labels.push(SceneLabel {
             x: frame_x + 22.0,
             y: frame_y + 17.0,
+            width: (frame_width - 44.0).max(80.0),
             text: SharedString::from(format!(
                 "{} / {}",
                 topology[*candidate].source.display_name,
@@ -1358,7 +1351,9 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
         });
     }
 
-    let show_all_labels = topology.len() <= 800;
+    // Keep short names available for normal project sizes. During panning the
+    // Slint label layer is hidden, so this does not add per-event work.
+    let show_all_labels = topology.len() <= 5_000;
     for (index, item) in topology.iter_mut().enumerate() {
         let source = item.source;
         let saved = layout
@@ -1397,6 +1392,7 @@ fn build_index_scene(indexed_nodes: &[StoredNode], layout: Option<&LayoutStore>)
             labels.push(SceneLabel {
                 x: x + 8.0,
                 y: y + 8.0,
+                width: width - 16.0,
                 text: SharedString::from(short_label(&source.display_name, 15)),
             });
         }
@@ -1881,7 +1877,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_index_scene_limits_labels_without_dropping_nodes() {
+    fn dense_index_scene_keeps_file_labels_without_dropping_nodes() {
         let mut nodes = vec![StoredNode {
             stable_id: None,
             display_path: "H:/project".to_owned(),
@@ -1903,7 +1899,8 @@ mod tests {
         let scene = build_index_scene(&nodes, None);
         let (_, width, height) = raster_dimensions(&scene);
         assert_eq!(scene.hit_targets.len(), 1_001);
-        assert!(scene.labels.len() < 20);
+        assert_eq!(scene.labels.len(), 1_001);
+        assert!(scene.modules.is_empty());
         assert!(width <= 4_096 && height <= 4_096);
     }
 }
