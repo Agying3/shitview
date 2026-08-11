@@ -171,21 +171,13 @@ export component AppWindow inherits Window {
                     clip: true;
 
                     Image {
-                        width: canvas.width;
-                        height: canvas.height;
+                        x: -root.pan-x * root.zoom * 1px;
+                        y: -root.pan-y * root.zoom * 1px;
+                        width: max(1px, root.scene-width * root.zoom * 1px);
+                        height: max(1px, root.scene-height * root.zoom * 1px);
                         preferred-width: 1px;
                         preferred-height: 1px;
                         source: root.graph-image;
-                        source-clip-x: round(root.pan-x / max(1, root.scene-width) * self.source.width);
-                        source-clip-y: round(root.pan-y / max(1, root.scene-height) * self.source.height);
-                        source-clip-width: min(
-                            self.source.width - self.source-clip-x,
-                            max(1, round(canvas.width / 1px / root.zoom / max(1, root.scene-width) * self.source.width))
-                        );
-                        source-clip-height: min(
-                            self.source.height - self.source-clip-y,
-                            max(1, round(canvas.height / 1px / root.zoom / max(1, root.scene-height) * self.source.height))
-                        );
                         image-fit: fill;
                         cache-rendering-hint: true;
                     }
