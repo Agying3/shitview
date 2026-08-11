@@ -61,8 +61,8 @@ export component AppWindow inherits Window {
     in property <float> selected-width: 0;
     in property <float> selected-height: 0;
     in-out property <float> zoom: 0.72;
-    in-out property <float> pulse: 0;
     in-out property <bool> canvas-pan-enabled: true;
+    in-out property <bool> canvas-interacting: false;
 
     callback select-density(int);
     callback browse-project();
@@ -274,10 +274,10 @@ export component AppWindow inherits Window {
                             height: root.scene-height * root.zoom * 1px;
                             source: root.graph-image;
                             image-fit: fill;
-                            opacity: root.benchmark-active ? 0.995 + root.pulse * 0.005 : 1;
+                            cache-rendering-hint: true;
                         }
 
-                        if root.zoom > 0.42: Rectangle {
+                        if root.zoom > 0.42 && !root.canvas-interacting: Rectangle {
                             width: root.scene-width * root.zoom * 1px;
                             height: root.scene-height * root.zoom * 1px;
                             background: transparent;
@@ -300,13 +300,20 @@ export component AppWindow inherits Window {
                                 root.canvas-clicked(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
                             }
                             moved => {
-                                root.canvas-moved(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                                if !root.canvas-pan-enabled {
+                                    root.canvas-moved(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                                }
                             }
                             pointer-event(event) => {
                                 if event.kind == PointerEventKind.down {
+                                    root.canvas-interacting = true;
                                     root.canvas-pressed(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
                                 } else if event.kind == PointerEventKind.up {
+                                    root.canvas-interacting = false;
                                     root.canvas-released(self.mouse-x / 1px / root.zoom, self.mouse-y / 1px / root.zoom);
+                                } else if event.kind == PointerEventKind.cancel {
+                                    root.canvas-interacting = false;
+                                    root.canvas-pan-enabled = true;
                                 }
                             }
                             scroll-event(event) => {

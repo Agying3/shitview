@@ -137,6 +137,14 @@ impl SpatialIndex {
     }
 
     fn subtree(&self, root: &HitTarget) -> Vec<DraggedTarget> {
+        if root.openable {
+            return vec![DraggedTarget {
+                path: root.path.clone(),
+                stable_id: root.stable_id.clone(),
+                origin_x: root.x,
+                origin_y: root.y,
+            }];
+        }
         let prefix = format!("{}/", root.path.trim_end_matches('/'));
         self.targets
             .iter()
@@ -156,6 +164,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let spatial_index = Arc::new(Mutex::new(SpatialIndex::default()));
     let selected_target = Rc::new(RefCell::new(None::<HitTarget>));
     let drag_state = Rc::new(RefCell::new(None::<DragState>));
+    let last_drag_frame = Rc::new(Cell::new(Instant::now()));
     let layout_store = Arc::new(Mutex::new(LayoutStore::default()));
     let current_nodes = Arc::new(Mutex::new(Vec::<StoredNode>::new()));
     let rendered_frames = Rc::new(Cell::new(0_u32));
@@ -319,10 +328,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let weak = ui.as_weak();
     let selected = Rc::clone(&selected_target);
     let drag = Rc::clone(&drag_state);
+    let last_frame = Rc::clone(&last_drag_frame);
     ui.on_canvas_moved(move |x, y| {
-        let Some(state) = drag.borrow().as_ref().cloned() else {
+        let state = drag.borrow();
+        let Some(state) = state.as_ref() else {
             return;
         };
+        let now = Instant::now();
+        if now.duration_since(last_frame.get()) < Duration::from_millis(16) {
+            return;
+        }
+        last_frame.set(now);
         if let Some(ui) = weak.upgrade() {
             if let Some(target) = selected.borrow_mut().as_mut() {
                 target.x = state.root.origin_x + x - state.start_pointer_x;
@@ -351,7 +367,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         ui.set_canvas_pan_enabled(true);
-        if let Ok(mut layout) = layout_store_for_drag.lock() {
+        let layout = layout_store_for_drag.lock().ok().map(|mut layout| {
             for target in &state.targets {
                 layout.set(
                     target.stable_id.as_deref(),
@@ -363,9 +379,23 @@ fn main() -> Result<(), slint::PlatformError> {
                     },
                 );
             }
-            if let Err(error) = layout.save() {
-                ui.set_status_detail(SharedString::from(format!("Cannot save layout: {error}")));
-            }
+            layout.clone()
+        });
+        if layout.is_some() {
+            let store = Arc::clone(&layout_store_for_drag);
+            let weak = ui.as_weak();
+            thread::spawn(move || {
+                let error = store.lock().ok().and_then(|layout| layout.save().err());
+                if let Some(error) = error {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_status_detail(SharedString::from(format!(
+                                "Cannot save layout: {error}"
+                            )));
+                        }
+                    });
+                }
+            });
         }
         if let Some(target) = selected.borrow_mut().as_mut() {
             target.x = new_x;
@@ -376,10 +406,6 @@ fn main() -> Result<(), slint::PlatformError> {
             .lock()
             .ok()
             .map(|nodes| nodes.clone());
-        let layout = layout_store_for_drag
-            .lock()
-            .ok()
-            .map(|layout| layout.clone());
         if let (Some(nodes), Some(layout)) = (nodes, layout) {
             if !nodes.is_empty() {
                 rebuild_project_scene(
@@ -486,16 +512,6 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_zoom_out(move || {
         if let Some(ui) = weak.upgrade() {
             ui.set_zoom((ui.get_zoom() - 0.10).max(0.28));
-        }
-    });
-
-    let pulse_started = Instant::now();
-    let pulse_timer = Timer::default();
-    let weak = ui.as_weak();
-    pulse_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
-        if let Some(ui) = weak.upgrade() {
-            let phase = (pulse_started.elapsed().as_secs_f32() * 1.8).sin();
-            ui.set_pulse((phase + 1.0) * 0.5);
         }
     });
 
