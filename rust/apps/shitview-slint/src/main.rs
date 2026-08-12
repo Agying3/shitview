@@ -12,7 +12,7 @@ use slint::{
 mod layout;
 use layout::{LayoutEntry, LayoutStore};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -74,8 +74,11 @@ struct HitTarget {
 struct DragState {
     root: DraggedTarget,
     targets: Vec<DraggedTarget>,
+    target_paths: HashSet<String>,
     start_pointer_x: f32,
     start_pointer_y: f32,
+    delta_x: f32,
+    delta_y: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +87,8 @@ struct DraggedTarget {
     stable_id: Option<Vec<u8>>,
     origin_x: f32,
     origin_y: f32,
+    width: f32,
+    height: f32,
 }
 
 #[derive(Debug, Default)]
@@ -144,6 +149,8 @@ impl SpatialIndex {
                 stable_id: root.stable_id.clone(),
                 origin_x: root.x,
                 origin_y: root.y,
+                width: root.width,
+                height: root.height,
             }];
         }
         let prefix = format!("{}/", root.path.trim_end_matches('/'));
@@ -155,8 +162,108 @@ impl SpatialIndex {
                 stable_id: target.stable_id.clone(),
                 origin_x: target.x,
                 origin_y: target.y,
+                width: target.width,
+                height: target.height,
             })
             .collect()
+    }
+
+    fn drag_delta_is_valid(&self, state: &DragState, delta_x: f32, delta_y: f32) -> bool {
+        const GAP: f32 = 8.0;
+        for moved in &state.targets {
+            let x = moved.origin_x + delta_x;
+            let y = moved.origin_y + delta_y;
+            if x < 60.0 || y < 60.0 {
+                return false;
+            }
+            let min_cell_x = ((x - GAP) / self.cell_size).floor() as i32;
+            let max_cell_x = ((x + moved.width + GAP) / self.cell_size).floor() as i32;
+            let min_cell_y = ((y - GAP) / self.cell_size).floor() as i32;
+            let max_cell_y = ((y + moved.height + GAP) / self.cell_size).floor() as i32;
+            for cell_y in min_cell_y..=max_cell_y {
+                for cell_x in min_cell_x..=max_cell_x {
+                    let Some(indices) = self.cells.get(&(cell_x, cell_y)) else {
+                        continue;
+                    };
+                    for index in indices {
+                        let other = &self.targets[*index];
+                        if state.target_paths.contains(&other.path) {
+                            continue;
+                        }
+                        if x < other.x + other.width + GAP
+                            && x + moved.width + GAP > other.x
+                            && y < other.y + other.height + GAP
+                            && y + moved.height + GAP > other.y
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn constrain_drag_delta(
+        &self,
+        state: &DragState,
+        desired_x: f32,
+        desired_y: f32,
+    ) -> (f32, f32) {
+        let minimum_x = state
+            .targets
+            .iter()
+            .map(|target| 60.0 - target.origin_x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let minimum_y = state
+            .targets
+            .iter()
+            .map(|target| 60.0 - target.origin_y)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let desired = (desired_x.max(minimum_x), desired_y.max(minimum_y));
+        if self.drag_delta_is_valid(state, desired.0, desired.1) {
+            return desired;
+        }
+
+        let mut best = None::<((f32, f32), f32)>;
+        for candidate in [(desired.0, state.delta_y), (state.delta_x, desired.1)] {
+            if (candidate.0 - state.delta_x).abs() < f32::EPSILON
+                && (candidate.1 - state.delta_y).abs() < f32::EPSILON
+            {
+                continue;
+            }
+            if !self.drag_delta_is_valid(state, candidate.0, candidate.1) {
+                continue;
+            }
+            let distance = (candidate.0 - desired.0).powi(2)
+                + (candidate.1 - desired.1).powi(2);
+            if best.as_ref().is_none_or(|(_, best_distance)| distance < *best_distance) {
+                best = Some((candidate, distance));
+            }
+        }
+        if let Some((candidate, _)) = best {
+            return candidate;
+        }
+
+        if !self.drag_delta_is_valid(state, state.delta_x, state.delta_y) {
+            return (state.delta_x, state.delta_y);
+        }
+        let mut valid_fraction = 0.0_f32;
+        let mut invalid_fraction = 1.0_f32;
+        for _ in 0..12 {
+            let fraction = (valid_fraction + invalid_fraction) * 0.5;
+            let candidate_x = state.delta_x + (desired.0 - state.delta_x) * fraction;
+            let candidate_y = state.delta_y + (desired.1 - state.delta_y) * fraction;
+            if self.drag_delta_is_valid(state, candidate_x, candidate_y) {
+                valid_fraction = fraction;
+            } else {
+                invalid_fraction = fraction;
+            }
+        }
+        (
+            state.delta_x + (desired.0 - state.delta_x) * valid_fraction,
+            state.delta_y + (desired.1 - state.delta_y) * valid_fraction,
+        )
     }
 }
 
@@ -310,30 +417,47 @@ fn main() -> Result<(), slint::PlatformError> {
             })
             .unwrap_or_default();
         *selected.borrow_mut() = hit.clone();
-        *drag.borrow_mut() = hit.as_ref().map(|target| DragState {
-            root: DraggedTarget {
-                path: target.path.clone(),
-                stable_id: target.stable_id.clone(),
-                origin_x: target.x,
-                origin_y: target.y,
-            },
-            targets,
-            start_pointer_x: x,
-            start_pointer_y: y,
+        *drag.borrow_mut() = hit.as_ref().map(|target| {
+            let target_paths = targets
+                .iter()
+                .map(|target| target.path.clone())
+                .collect();
+            DragState {
+                root: DraggedTarget {
+                    path: target.path.clone(),
+                    stable_id: target.stable_id.clone(),
+                    origin_x: target.x,
+                    origin_y: target.y,
+                    width: target.width,
+                    height: target.height,
+                },
+                targets,
+                target_paths,
+                start_pointer_x: x,
+                start_pointer_y: y,
+                delta_x: 0.0,
+                delta_y: 0.0,
+            }
         });
         if let Some(ui) = weak.upgrade() {
             ui.set_canvas_pan_enabled(hit.is_none());
             apply_selection(&ui, hit.as_ref());
+            ui.set_drag_preview_active(hit.is_some());
+            if let Some(target) = hit.as_ref() {
+                ui.set_drag_origin_x(target.x);
+                ui.set_drag_origin_y(target.y);
+            }
         }
     });
 
     let weak = ui.as_weak();
+    let interaction = Arc::clone(&spatial_index);
     let selected = Rc::clone(&selected_target);
     let drag = Rc::clone(&drag_state);
     let last_frame = Rc::clone(&last_drag_frame);
     ui.on_canvas_moved(move |x, y| {
-        let state = drag.borrow();
-        let Some(state) = state.as_ref() else {
+        let mut state = drag.borrow_mut();
+        let Some(state) = state.as_mut() else {
             return;
         };
         let now = Instant::now();
@@ -341,10 +465,19 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         }
         last_frame.set(now);
+        let desired_x = x - state.start_pointer_x;
+        let desired_y = y - state.start_pointer_y;
+        let (delta_x, delta_y) = interaction
+            .lock()
+            .ok()
+            .map(|index| index.constrain_drag_delta(state, desired_x, desired_y))
+            .unwrap_or((desired_x, desired_y));
+        state.delta_x = delta_x;
+        state.delta_y = delta_y;
         if let Some(ui) = weak.upgrade() {
             if let Some(target) = selected.borrow_mut().as_mut() {
-                target.x = state.root.origin_x + x - state.start_pointer_x;
-                target.y = state.root.origin_y + y - state.start_pointer_y;
+                target.x = state.root.origin_x + delta_x;
+                target.y = state.root.origin_y + delta_y;
                 ui.set_selected_x(target.x);
                 ui.set_selected_y(target.y);
             }
@@ -358,11 +491,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let current_nodes_for_drag = Arc::clone(&current_nodes);
     let interaction_for_drag = Arc::clone(&spatial_index);
     ui.on_canvas_released(move |x, y| {
-        let Some(state) = drag.borrow_mut().take() else {
+        let Some(mut state) = drag.borrow_mut().take() else {
             return;
         };
-        let delta_x = x - state.start_pointer_x;
-        let delta_y = y - state.start_pointer_y;
+        let desired_x = x - state.start_pointer_x;
+        let desired_y = y - state.start_pointer_y;
+        let (delta_x, delta_y) = interaction_for_drag
+            .lock()
+            .ok()
+            .map(|index| index.constrain_drag_delta(&state, desired_x, desired_y))
+            .unwrap_or((state.delta_x, state.delta_y));
+        state.delta_x = delta_x;
+        state.delta_y = delta_y;
         let new_x = (state.root.origin_x + delta_x).max(60.0);
         let new_y = (state.root.origin_y + delta_y).max(60.0);
         let Some(ui) = weak.upgrade() else {
@@ -419,6 +559,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
             }
         }
+        ui.set_drag_preview_active(false);
     });
 
     let weak = ui.as_weak();
@@ -1839,11 +1980,12 @@ fn format_number(value: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_index_scene, build_scene, raster_dimensions, rasterize_scene, LayoutEntry,
-        LayoutStore, SpatialIndex,
+        build_index_scene, build_scene, raster_dimensions, rasterize_scene, DragState, HitTarget,
+        LayoutEntry, LayoutStore, SpatialIndex,
     };
     use shitview_core::NodeKind;
     use shitview_storage::StoredNode;
+    use std::collections::HashSet;
     use std::time::Instant;
 
     #[test]
@@ -1879,6 +2021,42 @@ mod tests {
             .expect("target should be found in its grid cell");
         assert_eq!(hit.path, expected.path);
         assert!(index.hit(-10.0, -10.0).is_none());
+    }
+
+    #[test]
+    fn dragged_node_stops_at_collision_boundary() {
+        let target = |path: &str, x: f32| HitTarget {
+            x,
+            y: 100.0,
+            width: 126.0,
+            height: 36.0,
+            path: path.to_owned(),
+            openable: true,
+            stable_id: None,
+            pinned: false,
+            display_name: path.to_owned(),
+            kind: "File".to_owned(),
+            size_bytes: 0,
+            child_count: 0,
+        };
+        let moving = target("moving", 100.0);
+        let index = SpatialIndex::new(vec![moving.clone(), target("fixed", 260.0)]);
+        let targets = index.subtree(&moving);
+        let state = DragState {
+            root: targets[0].clone(),
+            target_paths: HashSet::from([moving.path.clone()]),
+            targets,
+            start_pointer_x: 0.0,
+            start_pointer_y: 0.0,
+            delta_x: 0.0,
+            delta_y: 0.0,
+        };
+
+        let constrained = index.constrain_drag_delta(&state, 100.0, 0.0);
+        assert!(constrained.0 >= 25.9 && constrained.0 <= 26.0);
+        assert_eq!(constrained.1, 0.0);
+        assert!(index.drag_delta_is_valid(&state, constrained.0, constrained.1));
+        assert!(!index.drag_delta_is_valid(&state, constrained.0 + 0.1, constrained.1));
     }
 
     #[test]

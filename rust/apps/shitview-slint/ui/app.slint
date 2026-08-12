@@ -69,6 +69,9 @@ export component AppWindow inherits Window {
     in-out property <float> pan-start-y: 0;
     in-out property <bool> canvas-pan-enabled: true;
     in-out property <bool> canvas-interacting: false;
+    in-out property <bool> drag-preview-active: false;
+    in-out property <float> drag-origin-x: 0;
+    in-out property <float> drag-origin-y: 0;
     in-out property <bool> view-initialized: false;
 
     callback select-density(int);
@@ -182,10 +185,21 @@ export component AppWindow inherits Window {
                         cache-rendering-hint: true;
                     }
 
+                    if root.drag-preview-active: Rectangle {
+                        x: (root.drag-origin-x - root.pan-x) * root.zoom * 1px - 2px;
+                        y: (root.drag-origin-y - root.pan-y) * root.zoom * 1px - 2px;
+                        width: root.selected-width * root.zoom * 1px + 4px;
+                        height: root.selected-height * root.zoom * 1px + 4px;
+                        background: #11161b;
+                    }
+
                     Rectangle {
                         cache-rendering-hint: true;
                         for label in root.graph-labels: Rectangle {
-                            visible: root.zoom >= 0.30 || label.always-visible;
+                            visible: (root.zoom >= 0.30 || label.always-visible)
+                                && !(root.drag-preview-active
+                                    && label.x == root.drag-origin-x + 8
+                                    && label.y == root.drag-origin-y + 8);
                             x: (label.x - root.pan-x) * root.zoom * 1px;
                             y: (label.y - root.pan-y) * root.zoom * 1px;
                             width: label.width * root.zoom * 1px;
@@ -252,6 +266,7 @@ export component AppWindow inherits Window {
                             } else if event.kind == PointerEventKind.cancel {
                                 root.canvas-interacting = false;
                                 root.canvas-pan-enabled = true;
+                                root.drag-preview-active = false;
                             }
                         }
                         scroll-event(event) => {
@@ -271,12 +286,12 @@ export component AppWindow inherits Window {
                         y: (root.selected-y - root.pan-y) * root.zoom * 1px;
                         width: root.selected-width * root.zoom * 1px;
                         height: root.selected-height * root.zoom * 1px;
-                        background: root.canvas-interacting && !root.canvas-pan-enabled ? #19372d : transparent;
-                        border-color: root.canvas-interacting && !root.canvas-pan-enabled ? #63e3a0 : #f0c96b;
+                        background: root.drag-preview-active ? #19372d : transparent;
+                        border-color: root.drag-preview-active ? #63e3a0 : #f0c96b;
                         border-width: 2px;
                         border-radius: 3px;
 
-                        if root.canvas-interacting && !root.canvas-pan-enabled: Text {
+                        if root.drag-preview-active: Text {
                             x: 7px;
                             width: parent.width - 12px;
                             height: parent.height;
